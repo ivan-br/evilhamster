@@ -26,7 +26,6 @@ import java.util.concurrent.TimeUnit;
 public class EvilHamsterBot extends TelegramLongPollingBot {
     private final HamsterConfigProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private final List<String> sentCoinsSymbols = new ArrayList<String>();
 
     public EvilHamsterBot(final HamsterConfigProperties properties) {
@@ -44,8 +43,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         if (update.hasMessage() && update.getMessage().hasText()) {
             var messageText = update.getMessage().getText();
             var chatId = update.getMessage().getChatId();
+            ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
             if (messageText.contains("/start")) {
+                executor = Executors.newSingleThreadScheduledExecutor();
                 executor = Executors.newSingleThreadScheduledExecutor();
 
                 String percentText = messageText.replace("/start:", "");
