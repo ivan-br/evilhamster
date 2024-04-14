@@ -43,15 +43,16 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         if (update.hasMessage() && update.getMessage().hasText()) {
             var messageText = update.getMessage().getText();
             var chatId = update.getMessage().getChatId();
+            ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
             if (messageText.contains("/start")) {
+                executor.shutdown();
                 var sentCoinsSymbols = new ArrayList<String>();
                 String percentText = messageText.replace("/start:", "");
-                ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
                 Runnable periodicTask = () -> sendWithPeriod(client, chatId, percentText, sentCoinsSymbols);
                 executor.scheduleAtFixedRate(periodicTask, 0, 10, TimeUnit.SECONDS);
-                executor.scheduleAtFixedRate(sentCoinsSymbols::clear, 1, 1, TimeUnit.DAYS);
+                executor.scheduleAtFixedRate(sentCoinsSymbols::clear, 3, 3, TimeUnit.HOURS);
             }
         }
     }
@@ -69,7 +70,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                                 if (percentText.matches("-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)")) {
                                     return new BigDecimal(coinInfo.getPriceChangePercent()).compareTo(new BigDecimal(percentText)) >= 1;
                                 } else {
-                                    return new BigDecimal(coinInfo.getPriceChangePercent()).compareTo(new BigDecimal(20)) >= 1;
+                                    return new BigDecimal(coinInfo.getPriceChangePercent()).compareTo(new BigDecimal(40)) >= 1;
                                 }
                             })
                             .toList();
