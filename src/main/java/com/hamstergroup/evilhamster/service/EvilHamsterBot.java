@@ -51,10 +51,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 String percentText = messageText.replace("/start:", "");
 
                 Runnable periodicTask = () -> sendWithPeriod(client, chatId, percentText, sentCoinsSymbols);
-                executor.scheduleAtFixedRate(periodicTask, 0, 10, TimeUnit.SECONDS);
+                executor.scheduleAtFixedRate(periodicTask, 0, 10, TimeUnit.MINUTES);
                 executor.scheduleAtFixedRate(sentCoinsSymbols::clear, 3, 3, TimeUnit.HOURS);
             } else if (messageText.contains("/stop")){
-                executor.shutdown();
+                executor.shutdownNow();
             }
         }
     }
