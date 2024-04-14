@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 public class EvilHamsterBot extends TelegramLongPollingBot {
     private final HamsterConfigProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
     public EvilHamsterBot(final HamsterConfigProperties properties) {
         super(properties.getBotToken());
@@ -45,26 +46,23 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             List<String> sentCoinsSymbols = new ArrayList<String>();
 
             if (messageText.contains("/start")) {
-                ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
                 String percentText = messageText.replace("/start:", "");
 
                 Runnable periodicTask = () -> sendWithPeriod(client, chatId, percentText, sentCoinsSymbols);
                 executor.scheduleAtFixedRate(periodicTask, 0, 10, TimeUnit.SECONDS);
                 executor.scheduleAtFixedRate(sentCoinsSymbols::clear, 3, 3, TimeUnit.HOURS);
+            } else if (messageText.contains("/stop")) {
+                executor.shutdownNow();
+                SendMessage sendMessage = new SendMessage();
+                sendMessage.setChatId(chatId);
+                sendMessage.setText("Stopped");
+                try {
+                    execute(sendMessage);
+                } catch (TelegramApiException e) {
+                    e.printStackTrace();
+                }
             }
-//            else if (messageText.contains("/stop")){
-//                executor.shutdownNow();
-//                sentCoinsSymbols.clear();
-//                SendMessage sendMessage = new SendMessage();
-//                sendMessage.setChatId(chatId);
-//                sendMessage.setText("Stopped");
-//                try {
-//                    execute(sendMessage);
-//                } catch (TelegramApiException e) {
-//                    e.printStackTrace();
-//                }
-//            }
         }
     }
 
