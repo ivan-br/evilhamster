@@ -55,6 +55,14 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 executor.scheduleAtFixedRate(sentCoinsSymbols::clear, 3, 3, TimeUnit.HOURS);
             } else if (messageText.contains("/stop")){
                 executor.shutdownNow();
+                SendMessage sendMessage = new SendMessage();
+                sendMessage.setChatId(chatId);
+                sendMessage.setText("Stopped");
+                try {
+                    execute(sendMessage);
+                } catch (TelegramApiException e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
