@@ -25,13 +25,14 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class EvilHamsterBot extends TelegramLongPollingBot {
     private final HamsterConfigProperties properties;
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+    private final List<String> sentCoinsSymbols = new ArrayList<String>();
 
     public EvilHamsterBot(final HamsterConfigProperties properties) {
         super(properties.getBotToken());
         this.properties = properties;
     }
-
 
     @Override
     public void onUpdateReceived(Update update) {
@@ -43,11 +44,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         if (update.hasMessage() && update.getMessage().hasText()) {
             var messageText = update.getMessage().getText();
             var chatId = update.getMessage().getChatId();
-            ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
             if (messageText.contains("/start")) {
                 executor = Executors.newSingleThreadScheduledExecutor();
-                var sentCoinsSymbols = new ArrayList<String>();
+
                 String percentText = messageText.replace("/start:", "");
 
                 Runnable periodicTask = () -> sendWithPeriod(client, chatId, percentText, sentCoinsSymbols);
@@ -55,6 +55,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 executor.scheduleAtFixedRate(sentCoinsSymbols::clear, 3, 3, TimeUnit.HOURS);
             } else if (messageText.contains("/stop")){
                 executor.shutdownNow();
+                sentCoinsSymbols.clear();
                 SendMessage sendMessage = new SendMessage();
                 sendMessage.setChatId(chatId);
                 sendMessage.setText("Stopped");
