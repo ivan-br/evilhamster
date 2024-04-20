@@ -81,16 +81,11 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 2. Stop the notification session: /stop
                 """);
         try {
-            execute(sendMessage);
-        } catch (TelegramApiException e) {
-            e.printStackTrace();
-        }
-
-        PinChatMessage pinChatMessage = new PinChatMessage();
-        pinChatMessage.setMessageId(sendMessage.getReplyToMessageId());
-        pinChatMessage.setChatId(chatId);
-        try {
-            execute(pinChatMessage);
+            var response = execute(sendMessage);
+            sendApiMethodAsync(PinChatMessage.builder()
+                    .chatId(chatId)
+                    .messageId(response.getMessageId())
+                    .build());
         } catch (TelegramApiException e) {
             e.printStackTrace();
         }
