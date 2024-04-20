@@ -74,7 +74,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId);
         sendMessage.setText("""
-                Welcome to evil hamster bot \u1F439
+                Welcome to evil hamster bot 🐹
 
                 Commands:
                 1. Set percent notifications: /set:40
