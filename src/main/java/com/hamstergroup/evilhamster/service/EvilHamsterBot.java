@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.pinnedmessages.PinChatMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
@@ -46,9 +47,11 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             List<String> sentCoinsSymbols = new ArrayList<String>();
 
             if (messageText.contains("/start")) {
+                sendAndPinWelcomeMessage(chatId);
+            } else if (messageText.contains("/set")) {
                 executor = Executors.newSingleThreadScheduledExecutor();
 
-                String percentText = messageText.replace("/start:", "");
+                String percentText = messageText.replace("/set:", "");
 
                 Runnable periodicTask = () -> sendWithPeriod(client, chatId, percentText, sentCoinsSymbols);
                 executor.scheduleAtFixedRate(periodicTask, 0, 10, TimeUnit.SECONDS);
@@ -64,6 +67,32 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     e.printStackTrace();
                 }
             }
+        }
+    }
+
+    private void sendAndPinWelcomeMessage(Long chatId) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.setChatId(chatId);
+        sendMessage.setText("""
+                Welcome to evil hamster bot \u1F439
+
+                Commands:
+                1. Set percent notifications: /set:40
+                2. Stop the notification session: /stop
+                """);
+        try {
+            execute(sendMessage);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+
+        PinChatMessage pinChatMessage = new PinChatMessage();
+        pinChatMessage.setMessageId(sendMessage.getReplyToMessageId());
+        pinChatMessage.setChatId(chatId);
+        try {
+            execute(pinChatMessage);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
         }
     }
 
