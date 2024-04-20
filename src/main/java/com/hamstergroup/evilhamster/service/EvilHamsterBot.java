@@ -70,7 +70,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
                 Commands:
                 1. Set percent notifications: /set:percent:interval
-                2. Stop the notification session: /stop
                 """);
         try {
             var response = execute(sendMessage);
