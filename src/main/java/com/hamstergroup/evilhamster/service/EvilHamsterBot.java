@@ -49,23 +49,15 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             if (messageText.contains("/start")) {
                 sendAndPinWelcomeMessage(chatId);
             } else if (messageText.contains("/set")) {
+                executor.shutdownNow();
                 executor = Executors.newSingleThreadScheduledExecutor();
-
-                String percentText = messageText.replace("/set:", "");
+                var array = messageText.replace("/set:", "").split(":");
+                String percentText = array[0];
+                int interval = Integer.parseInt(array[1]);
 
                 Runnable periodicTask = () -> sendWithPeriod(client, chatId, percentText, sentCoinsSymbols);
-                executor.scheduleAtFixedRate(periodicTask, 0, 10, TimeUnit.SECONDS);
+                executor.scheduleAtFixedRate(periodicTask, 0, interval, TimeUnit.SECONDS);
                 executor.scheduleAtFixedRate(sentCoinsSymbols::clear, 3, 3, TimeUnit.HOURS);
-            } else if (messageText.contains("/stop")) {
-                executor.shutdownNow();
-                SendMessage sendMessage = new SendMessage();
-                sendMessage.setChatId(chatId);
-                sendMessage.setText("Stopped");
-                try {
-                    execute(sendMessage);
-                } catch (TelegramApiException e) {
-                    e.printStackTrace();
-                }
             }
         }
     }
@@ -77,7 +69,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 Welcome to evil hamster bot 🐹
 
                 Commands:
-                1. Set percent notifications: /set:40
+                1. Set percent notifications: /set:percent:interval
                 2. Stop the notification session: /stop
                 """);
         try {
