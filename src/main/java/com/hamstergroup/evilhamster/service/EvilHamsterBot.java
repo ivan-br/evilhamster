@@ -21,34 +21,23 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 @Component
 public class EvilHamsterBot extends TelegramLongPollingBot {
-    // callback formats:
-    // UPDATE:<topN>:<dexFlag>  where dexFlag = 1 (enabled) or 0 (disabled)
-    // TOGGLE:<topN>:<dexFlag>  same encoding (dexFlag is current value BEFORE toggle)
-    private static final String CB_UPDATE = "UPDATE";
-    private static final String CB_TOGGLE = "TOGGLE";
-    private static final int FETCH_POOL_SIZE = 100;
+    private static final String CB_PREFIX = "UPDATE_TOP_N:";
 
     private final HamsterConfigProperties properties;
     private final FundingTracker tracker = new FundingTracker();
 
+    // notifications
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private final Map<Long, ScheduledFuture<?>> notificationTasks = new ConcurrentHashMap<>();
-    private final Map<Long, Boolean> dexEnabledByChat = new ConcurrentHashMap<>();
-
-    private static final Set<String> DEX_EXCHANGES = Set.of(
-            "Hyperliquid", "ApeX", "Aster", "Paradex", "Lighter"
-    );
 
     public EvilHamsterBot(HamsterConfigProperties properties) {
         super(properties.getBotToken());
@@ -66,7 +55,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
             String text = update.getMessage().getText().trim();
             long chatId = update.getMessage().getChatId();
-            dexEnabledByChat.putIfAbsent(chatId, true); // default: DEX ON
 
             if (text.startsWith("/start")) {
                 sendAndPinWelcomeMessage(chatId);
@@ -76,15 +64,12 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             if (text.startsWith("/update")) {
                 int topN = 10;
                 String[] parts = text.split("\\s+");
-                if (parts.length >= 2) {
-                    try {
-                        topN = Math.max(1, Integer.parseInt(parts[1]));
-                    } catch (Exception ignored) {
-                    }
+                if (parts.length >= 2) try {
+                    topN = Math.max(1, Integer.parseInt(parts[1]));
+                } catch (Exception ignored) {
                 }
-                boolean dexEnabled = dexEnabledByChat.getOrDefault(chatId, true);
-                String html = buildFormattedReportFiltered(topN, dexEnabled);
-                sendHtmlWithControls(chatId, html, topN, dexEnabled);
+                String html = buildFormattedReport(topN);
+                sendHtmlWithUpdateButton(chatId, html, topN);
                 return;
             }
 
@@ -123,49 +108,33 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
+    // ===== CALLBACK: 🔄 Update
     private void handleCallback(Update update) {
         var cb = update.getCallbackQuery();
-        long chatId = cb.getMessage().getChatId();
-        dexEnabledByChat.putIfAbsent(chatId, true);
-
         String data = cb.getData() == null ? "" : cb.getData();
-        try {
-            String[] parts = data.split(":");
-            if (parts.length < 3) return;
-            String kind = parts[0];
-            int topN = Integer.parseInt(parts[1]);
-            boolean dexEnabled = "1".equals(parts[2]);
+        if (!data.startsWith(CB_PREFIX)) return;
 
-            if (CB_UPDATE.equals(kind)) {
-                // просто перерисовать с текущим состоянием
-                dexEnabledByChat.put(chatId, dexEnabled);
-                String html = buildFormattedReportFiltered(topN, dexEnabled);
-                execute(EditMessageText.builder()
-                        .chatId(String.valueOf(chatId))
-                        .messageId(cb.getMessage().getMessageId())
-                        .parseMode("HTML")
-                        .text(html)
-                        .replyMarkup(controlsKeyboard(topN, dexEnabled))
-                        .build());
-            } else if (CB_TOGGLE.equals(kind)) {
-                // инвертируем флаг и перерисовываем
-                boolean nextDex = !dexEnabled;
-                dexEnabledByChat.put(chatId, nextDex);
-                String html = buildFormattedReportFiltered(topN, nextDex);
-                execute(EditMessageText.builder()
-                        .chatId(String.valueOf(chatId))
-                        .messageId(cb.getMessage().getMessageId())
-                        .parseMode("HTML")
-                        .text(html)
-                        .replyMarkup(controlsKeyboard(topN, nextDex))
-                        .build());
-            }
+        int topN = 10;
+        try {
+            topN = Integer.parseInt(data.substring(CB_PREFIX.length()));
+        } catch (Exception ignored) {
+        }
+
+        try {
+            String html = buildFormattedReport(topN);
+            execute(EditMessageText.builder()
+                    .chatId(cb.getMessage().getChatId().toString())
+                    .messageId(cb.getMessage().getMessageId())
+                    .parseMode("HTML")
+                    .text(html)
+                    .replyMarkup(updateKeyboard(topN))
+                    .build());
             execute(AnswerCallbackQuery.builder().callbackQueryId(cb.getId()).build());
         } catch (Exception e) {
             try {
                 execute(AnswerCallbackQuery.builder()
                         .callbackQueryId(cb.getId())
-                        .text("Error: " + e.getMessage())
+                        .text("Update failed: " + e.getMessage())
                         .showAlert(true)
                         .build());
             } catch (TelegramApiException ignored) {
@@ -173,25 +142,19 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    // ===== REPORT with optional DEX filtering
-    private String buildFormattedReportFiltered(int topN, boolean dexEnabled) throws Exception {
-        List<FundingTracker.FundingDiff> pool = tracker.topDifferences(Math.max(FETCH_POOL_SIZE, topN));
-        if (!dexEnabled) {
-            pool = pool.stream()
-                    .filter(d -> !isDex(d.max().exchange()) && !isDex(d.min().exchange()))
-                    .collect(Collectors.toList());
-        }
-        List<FundingTracker.FundingDiff> top = pool.stream().limit(topN).collect(Collectors.toList());
-
+    // ===== REPORT
+    private String buildFormattedReport(int topN) throws Exception {
+        List<FundingTracker.FundingDiff> top = tracker.topDifferences(topN);
         String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                 .withZone(ZoneOffset.UTC).format(Instant.now());
 
         StringBuilder sb = new StringBuilder();
-        sb.append("<b>🔎 Funding scan (top ").append(topN).append(dexEnabled ? "" : ", DEX OFF").append(")</b>\n")
+        sb.append("<b>🔎 Funding scan (top ").append(topN).append(")</b>\n")
                 .append("<i>UTC: ").append(ts).append("</i>\n\n");
 
         for (FundingTracker.FundingDiff diff : top) {
             FundingTracker.Funding mx = diff.max(), mn = diff.min();
+
             sb.append("• <b>").append(esc(diff.base()))
                     .append("</b> — Δ <code>").append(fmt(diff.diffPct())).append("%</code>\n");
 
@@ -211,31 +174,19 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 sb.append(" • Px: <code>").append(fmt(mn.price())).append("</code>");
             sb.append("\n\n");
         }
-        if (top.isEmpty()) sb.append("No entries matched the current filters.");
         return sb.toString();
     }
 
-    private boolean isDex(String exchange) {
-        return DEX_EXCHANGES.contains(exchange);
-    }
-
-    // ===== NOTIFICATIONS (respect chat's DEX flag)
+    // ===== NOTIFICATIONS
     private void scheduleNotification(long chatId, long windowMin, double thresholdPct, long intervalMin) {
         cancelNotification(chatId);
-        dexEnabledByChat.putIfAbsent(chatId, true);
 
         Runnable task = () -> {
             try {
-                boolean dexEnabled = dexEnabledByChat.getOrDefault(chatId, true);
-                List<FundingTracker.FundingDiff> pool = tracker.topDifferences(FETCH_POOL_SIZE);
-                if (!dexEnabled) {
-                    pool = pool.stream()
-                            .filter(d -> !isDex(d.max().exchange()) && !isDex(d.min().exchange()))
-                            .collect(Collectors.toList());
-                }
-                if (pool.isEmpty()) return;
+                List<FundingTracker.FundingDiff> top = tracker.topDifferences(10);
+                if (top.isEmpty()) return;
 
-                FundingTracker.FundingDiff best = pool.get(0);
+                FundingTracker.FundingDiff best = top.get(0);
                 double delta = best.diffPct();
                 long etaMin = Math.min(
                         etaMinutes(best.max().nextFundingTimeMs()),
@@ -243,7 +194,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 );
 
                 if (Double.compare(delta, thresholdPct) >= 0 && etaMin >= 0 && etaMin <= windowMin) {
-                    sendHtml(chatId, renderAlert(best, thresholdPct, windowMin, etaMin, dexEnabled));
+                    sendHtml(chatId, renderAlert(best, thresholdPct, windowMin, etaMin));
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -259,11 +210,12 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         Optional.ofNullable(notificationTasks.remove(chatId)).ifPresent(f -> f.cancel(true));
     }
 
-    private String renderAlert(FundingTracker.FundingDiff d, double thr, long window, long eta, boolean dexEnabled) {
+    private String renderAlert(FundingTracker.FundingDiff d, double thr, long window, long eta) {
         FundingTracker.Funding mx = d.max(), mn = d.min();
         StringBuilder sb = new StringBuilder();
-        sb.append("<b>⚡ Funding alert").append(dexEnabled ? "" : " (DEX OFF)").append("</b>\n")
-                .append("Δ <code>").append(fmt(d.diffPct())).append("%</code> (≥ ").append(fmt(thr)).append("%)\n")
+        sb.append("<b>⚡ Funding alert</b>\n")
+                .append("Δ <code>").append(fmt(d.diffPct())).append("%</code> (≥ ")
+                .append(fmt(thr)).append("%)\n")
                 .append("Window ≤ ").append(window).append("m, next ~").append(eta).append("m\n\n");
 
         sb.append("<b>").append(esc(d.base())).append("</b>\n");
@@ -281,35 +233,27 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         return sb.toString();
     }
 
-    // ===== UI
-    private void sendHtmlWithControls(Long chatId, String html, int topN, boolean dexEnabled) {
+    // ===== UI helpers
+    private void sendHtmlWithUpdateButton(Long chatId, String html, int topN) {
         try {
             execute(SendMessage.builder()
                     .chatId(chatId)
                     .parseMode("HTML")
                     .text(html)
-                    .replyMarkup(controlsKeyboard(topN, dexEnabled))
+                    .replyMarkup(updateKeyboard(topN))
                     .build());
         } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
 
-    private InlineKeyboardMarkup controlsKeyboard(int topN, boolean dexEnabled) {
-        String dexFlag = dexEnabled ? "1" : "0";
-        InlineKeyboardButton updateBtn = InlineKeyboardButton.builder()
+    private InlineKeyboardMarkup updateKeyboard(int topN) {
+        InlineKeyboardButton btn = InlineKeyboardButton.builder()
                 .text("🔄 Update")
-                .callbackData(CB_UPDATE + ":" + topN + ":" + dexFlag)
+                .callbackData(CB_PREFIX + topN)
                 .build();
-
-        String box = dexEnabled ? "☑" : "☐";
-        InlineKeyboardButton dexBtn = InlineKeyboardButton.builder()
-                .text("DEX " + box)
-                .callbackData(CB_TOGGLE + ":" + topN + ":" + dexFlag)
-                .build();
-
         InlineKeyboardMarkup kb = new InlineKeyboardMarkup();
-        kb.setKeyboard(List.of(List.of(updateBtn, dexBtn)));
+        kb.setKeyboard(List.of(List.of(btn)));
         return kb;
     }
 
@@ -329,7 +273,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    // ===== utils / formatting
     private static String fmt(double v) {
         return String.format(Locale.US, "%.4f", v);
     }
@@ -359,14 +302,14 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         if (!m.matches()) throw new IllegalArgumentException("bad duration");
         long v = Long.parseLong(m.group(1));
         String u = m.group(2);
-        return "h".equals(u) ? v * 60 : v;
+        return "h".equals(u) ? v * 60 : v; // default minutes (also 'm' or empty)
     }
 
     private static double parsePercent(String token) {
         return Double.parseDouble(token.trim().replace("%", "").replace(",", "."));
     }
 
-    // ===== welcome/pin
+    // ===== welcome/pin (as before)
     private void sendMessageInfo(Long chatId, Message message) {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId);
@@ -389,24 +332,22 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private void sendAndPinWelcomeMessage(Long chatId) {
         try {
             String instruction = """
-                    Commands:
-                    • /update [N] — show top-N pairs by funding spread
-                    • <code>/notification &lt;window&gt; &lt;percent&gt; &lt;interval&gt;</code> — schedule alerts
-                      Examples: <code>/notification 30m 1% 60m</code> | <code>/notification 120m 0.1% 30m</code>
-                    • /notification_stop — stop alerts
-                    
-                    Links:
-                    • Trading Channel: <a href="https://t.me/vane4ek_trade">@vane4ek_trade</a>
-                    • Admin: <a href="https://t.me/fuckdisusername">@fuckdisusername</a>
-                    """;
+                Commands:
+                • /update [N] — show top-N pairs by funding spread
+                • <code>/notification &lt;window&gt; &lt;percent&gt; &lt;interval&gt;</code> — schedule alerts
+                  Examples: <code>/notification 30m 1% 60m</code> | <code>/notification 120m 0.1% 30m</code>
+                • /notification_stop — stop alerts
 
-            boolean dexEnabled = dexEnabledByChat.getOrDefault(chatId, true);
+                Links:
+                • Trading Channel: <a href="https://t.me/vane4ek_trade">@vane4ek_trade</a>
+                • Admin: <a href="https://t.me/fuckdisusername">@fuckdisusername</a>
+                """;
+
             var response = execute(SendMessage.builder()
                     .chatId(chatId)
                     .parseMode("HTML")
                     .disableWebPagePreview(true)
                     .text(instruction)
-                    .replyMarkup(controlsKeyboard(10, dexEnabled))
                     .build());
 
             execute(PinChatMessage.builder()
@@ -423,5 +364,4 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         return properties.getBotName();
     }
 }
-
 
