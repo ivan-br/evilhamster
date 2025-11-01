@@ -15,9 +15,11 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -271,9 +273,64 @@ public class FundingTracker {
         public String name() { return "LBank"; }
         public List<Funding> fetch() { return List.of(); }
     }
+    // Внутри FundingTracker вместо заглушки:
     static class HTX implements ExchangeAdapter {
         public String name() { return "HTX"; }
-        public List<Funding> fetch() { return List.of(); }
+
+        public List<Funding> fetch() throws Exception {
+            // 1) Список контрактов USDT-маржи (линейные свопы)
+            //    https://api.hbdm.com/linear-swap-api/v1/swap_contract_info
+            JsonNode infoRoot = getJson("https://api.hbdm.com/linear-swap-api/v1/swap_contract_info");
+            Set<String> symbols = new HashSet<>();
+            JsonNode infoList = infoRoot.path("data");
+            if (infoList.isArray()) {
+                for (JsonNode n : infoList) {
+                    // напр. BTC-USDT
+                    String contractCode = n.path("contract_code").asText("");
+                    if (contractCode.endsWith("-USDT")) {
+                        // нормализуем под общий стиль: BTC_USDT
+                        symbols.add(contractCode.replace("-", "_"));
+                    }
+                }
+            }
+
+            // 2) Текущие funding rates по контрактам (по одному запросу на символ)
+            // API: /linear-swap-api/v1/swap_funding_rate?contract_code=BTC-USDT
+            // Документация HTX: "linear-swap-api/v1/swap_funding_rate"
+            List<Funding> out = new ArrayList<>();
+            for (String norm : symbols) {
+                String htxCode = norm.replace("_", "-"); // обратно для вызова API
+                try {
+                    JsonNode frRoot = getJson("https://api.hbdm.com/linear-swap-api/v1/swap_funding_rate?contract_code=" + htxCode);
+                    JsonNode data = frRoot.path("data");
+                    if (data.isObject() || data.isArray()) {
+                        JsonNode node = data.isArray() && data.size() > 0 ? data.get(0) : data;
+                        double rate = d(node.path("funding_rate").asText(null)); // как доля (0.001 = 0.1%)
+                        Long next  = node.hasNonNull("next_funding_time")
+                                ? (node.get("next_funding_time").isNumber()
+                                ? node.get("next_funding_time").asLong()
+                                : l(node.get("next_funding_time").asText()))
+                                : null;
+
+                        // цену возьмём из тикера (last) — необязательно, но полезно
+                        double price = Double.NaN;
+                        try {
+                            JsonNode tick = getJson("https://api.hbdm.com/linear-swap-ex/market/detail/merged?contract_code=" + htxCode);
+                            price = d(tick.path("tick").path("close").asText(null));
+                        } catch (Exception ignore) {}
+
+                        if (!Double.isNaN(rate)) {
+                            out.add(new Funding(name(), norm, rate, price, next, false));
+                        }
+                    }
+                } catch (Exception ignore) {
+                    // если конкретный контракт не отдался — пропускаем, продолжаем по остальным
+                }
+            }
+
+            // если nextFundingTime отсутствует, оценим (HTX — 8ч интервалы)
+            return out.stream().map(f -> withEstimatedTime(f, 0)).toList();
+        }
     }
     static class Ourbit implements ExchangeAdapter {
         public String name() { return "Ourbit"; }
