@@ -331,20 +331,25 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
     private void sendAndPinWelcomeMessage(Long chatId) {
         try {
+            String instruction = """
+                Commands:
+                • /update [N] — show top-N pairs by funding spread
+                • /notification <window> <percent> <interval> — schedule alerts
+                  Examples: /notification 30m 1% 60m | /notification 120m 0.1% 30m
+                • /notification_stop — stop alerts
+
+                Links:
+                • Trading Channel: <a href="https://t.me/vane4ek_trade">@vane4ek_trade</a>
+                • Admin: <a href="https://t.me/fuckdisusername">@fuckdisusername</a>
+                """;
+
             var response = execute(SendMessage.builder()
                     .chatId(chatId)
                     .parseMode("HTML")
-                    .text("""
-                            <b>Welcome to evil hamster bot 🐹</b>
-                            
-                            Commands:
-                            • <b>/update [N]</b> — показать топ-N по дельте фандинга
-                            • <b>/notification &lt;window&gt; &lt;percent&gt; &lt;interval&gt;</b>
-                              e.g. <code>/notification 30m 1% 60m</code>
-                            • <b>/notification_stop</b> — отключить уведомления
-                            """)
-                    .replyMarkup(updateKeyboard(10))
+                    .disableWebPagePreview(true)
+                    .text(instruction)
                     .build());
+
             execute(PinChatMessage.builder()
                     .chatId(chatId)
                     .messageId(response.getMessageId())
@@ -353,6 +358,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             e.printStackTrace();
         }
     }
+
 
     @Override
     public String getBotUsername() {
