@@ -334,8 +334,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             String instruction = """
                 Commands:
                 • /update [N] — show top-N pairs by funding spread
-                • /notification <window> <percent> <interval> — schedule alerts
-                  Examples: /notification 30m 1% 60m | /notification 120m 0.1% 30m
+                • <code>/notification &lt;window&gt; &lt;percent&gt; &lt;interval&gt;</code> — schedule alerts
+                  Examples: <code>/notification 30m 1% 60m</code> | <code>/notification 120m 0.1% 30m</code>
                 • /notification_stop — stop alerts
 
                 Links:
@@ -358,7 +358,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             e.printStackTrace();
         }
     }
-
 
     @Override
     public String getBotUsername() {
