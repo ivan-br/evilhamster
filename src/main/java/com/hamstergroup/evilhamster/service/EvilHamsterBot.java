@@ -31,6 +31,7 @@ import java.util.regex.Pattern;
 @Component
 public class EvilHamsterBot extends TelegramLongPollingBot {
     private static final String CB_PREFIX = "UPDATE_TOP_N:";
+
     private final HamsterConfigProperties properties;
     private final FundingTracker tracker = new FundingTracker();
 
@@ -46,18 +47,27 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     @Override
     public void onUpdateReceived(Update update) {
         try {
-            if (update.hasCallbackQuery()) { handleCallback(update); return; }
+            if (update.hasCallbackQuery()) {
+                handleCallback(update);
+                return;
+            }
             if (!(update.hasMessage() && update.getMessage().hasText())) return;
 
             String text = update.getMessage().getText().trim();
             long chatId = update.getMessage().getChatId();
 
-            if (text.startsWith("/start")) { sendAndPinWelcomeMessage(chatId); return; }
+            if (text.startsWith("/start")) {
+                sendAndPinWelcomeMessage(chatId);
+                return;
+            }
 
             if (text.startsWith("/update")) {
                 int topN = 10;
                 String[] parts = text.split("\\s+");
-                if (parts.length >= 2) try { topN = Math.max(1, Integer.parseInt(parts[1])); } catch (Exception ignored) {}
+                if (parts.length >= 2) try {
+                    topN = Math.max(1, Integer.parseInt(parts[1]));
+                } catch (Exception ignored) {
+                }
                 String html = buildFormattedReport(topN);
                 sendHtmlWithUpdateButton(chatId, html, topN);
                 return;
@@ -91,21 +101,24 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 return;
             }
 
-            // fallback
+            // default
             sendMessageInfo(chatId, update.getMessage());
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    // ======= CALLBACK: 🔄 Update
+    // ===== CALLBACK: 🔄 Update
     private void handleCallback(Update update) {
         var cb = update.getCallbackQuery();
         String data = cb.getData() == null ? "" : cb.getData();
         if (!data.startsWith(CB_PREFIX)) return;
 
         int topN = 10;
-        try { topN = Integer.parseInt(data.substring(CB_PREFIX.length())); } catch (Exception ignored) {}
+        try {
+            topN = Integer.parseInt(data.substring(CB_PREFIX.length()));
+        } catch (Exception ignored) {
+        }
 
         try {
             String html = buildFormattedReport(topN);
@@ -124,11 +137,12 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                         .text("Update failed: " + e.getMessage())
                         .showAlert(true)
                         .build());
-            } catch (TelegramApiException ignored) {}
+            } catch (TelegramApiException ignored) {
+            }
         }
     }
 
-    // ======= REPORT RENDERING (HTML)
+    // ===== REPORT
     private String buildFormattedReport(int topN) throws Exception {
         List<FundingTracker.FundingDiff> top = tracker.topDifferences(topN);
         String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -146,7 +160,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
             sb.append("  Max: <b>").append(esc(mx.exchange())).append("</b> ")
                     .append("<code>").append(esc(mx.symbol())).append("</code>")
-                    .append(" — <code>").append(fmt(mx.rate()*100)).append("%</code>")
+                    .append(" — <code>").append(fmt(mx.rate() * 100)).append("%</code>")
                     .append(" (").append(formatEta(mx.nextFundingTimeMs(), mx.nextTimeEstimated())).append(")");
             if (!Double.isNaN(mx.price()))
                 sb.append(" • Px: <code>").append(fmt(mx.price())).append("</code>");
@@ -154,7 +168,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
             sb.append("  Min: <b>").append(esc(mn.exchange())).append("</b> ")
                     .append("<code>").append(esc(mn.symbol())).append("</code>")
-                    .append(" — <code>").append(fmt(mn.rate()*100)).append("%</code>")
+                    .append(" — <code>").append(fmt(mn.rate() * 100)).append("%</code>")
                     .append(" (").append(formatEta(mn.nextFundingTimeMs(), mn.nextTimeEstimated())).append(")");
             if (!Double.isNaN(mn.price()))
                 sb.append(" • Px: <code>").append(fmt(mn.price())).append("</code>");
@@ -163,7 +177,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         return sb.toString();
     }
 
-    // ======= NOTIFICATIONS
+    // ===== NOTIFICATIONS
     private void scheduleNotification(long chatId, long windowMin, double thresholdPct, long intervalMin) {
         cancelNotification(chatId);
 
@@ -206,20 +220,20 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
         sb.append("<b>").append(esc(d.base())).append("</b>\n");
         sb.append("Max: <b>").append(esc(mx.exchange())).append("</b> <code>").append(esc(mx.symbol())).append("</code>")
-                .append(" — <code>").append(fmt(mx.rate()*100)).append("%</code>")
+                .append(" — <code>").append(fmt(mx.rate() * 100)).append("%</code>")
                 .append(" (").append(formatEta(mx.nextFundingTimeMs(), mx.nextTimeEstimated())).append(")");
         if (!Double.isNaN(mx.price())) sb.append(" • Px: <code>").append(fmt(mx.price())).append("</code>");
         sb.append("\n");
 
         sb.append("Min: <b>").append(esc(mn.exchange())).append("</b> <code>").append(esc(mn.symbol())).append("</code>")
-                .append(" — <code>").append(fmt(mn.rate()*100)).append("%</code>")
+                .append(" — <code>").append(fmt(mn.rate() * 100)).append("%</code>")
                 .append(" (").append(formatEta(mn.nextFundingTimeMs(), mn.nextTimeEstimated())).append(")");
         if (!Double.isNaN(mn.price())) sb.append(" • Px: <code>").append(fmt(mn.price())).append("</code>");
 
         return sb.toString();
     }
 
-    // ======= UI helpers
+    // ===== UI helpers
     private void sendHtmlWithUpdateButton(Long chatId, String html, int topN) {
         try {
             execute(SendMessage.builder()
@@ -246,31 +260,42 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private void sendHtml(Long chatId, String html) {
         try {
             execute(SendMessage.builder().chatId(chatId).parseMode("HTML").text(html).build());
-        } catch (TelegramApiException e) { e.printStackTrace(); }
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
     }
 
     private void sendText(Long chatId, String text) {
         try {
             execute(SendMessage.builder().chatId(chatId).text(text).build());
-        } catch (TelegramApiException e) { e.printStackTrace(); }
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
     }
 
-    // ======= formatting / parsing utils
-    private static String fmt(double v) { return String.format(Locale.US, "%.4f", v); }
-    private static String esc(String s) { return s == null ? "" : s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"); }
+    private static String fmt(double v) {
+        return String.format(Locale.US, "%.4f", v);
+    }
+
+    private static String esc(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
     private String formatEta(Long ms, boolean estimated) {
         if (ms == null) return "—";
         long delta = ms - System.currentTimeMillis();
         if (delta <= 0) return estimated ? "≈0m" : "0m";
         long m = delta / 60000, h = m / 60, r = m % 60;
-        String s = (h > 48) ? (h/24) + "d " + (h%24) + "h" : (h > 0 ? h + "h " + r + "m" : r + "m");
+        String s = (h > 48) ? (h / 24) + "d " + (h % 24) + "h" : (h > 0 ? h + "h " + r + "m" : r + "m");
         return estimated ? "≈" + s : s;
     }
+
     private static long etaMinutes(Long ms) {
         if (ms == null) return -1;
         long d = ms - System.currentTimeMillis();
         return d <= 0 ? 0 : d / 60000;
     }
+
     private static long parseDurationToMinutes(String token) {
         String t = token.trim().toLowerCase(Locale.ROOT);
         var m = Pattern.compile("^([0-9]+)([mh]?)$").matcher(t);
@@ -279,12 +304,13 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         String u = m.group(2);
         return "h".equals(u) ? v * 60 : v; // default minutes (also 'm' or empty)
     }
+
     private static double parsePercent(String token) {
-        return Double.parseDouble(token.trim().replace("%","").replace(",", "."));
+        return Double.parseDouble(token.trim().replace("%", "").replace(",", "."));
     }
 
-    // ======= welcome/pin (как было)
-    private void sendMessageInfo(Long chatId, Message message){
+    // ===== welcome/pin (as before)
+    private void sendMessageInfo(Long chatId, Message message) {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId);
         sendMessage.setText(
@@ -298,7 +324,9 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     .chatId(chatId)
                     .messageId(response.getMessageId())
                     .build());
-        } catch (TelegramApiException e) { e.printStackTrace(); }
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
     }
 
     private void sendAndPinWelcomeMessage(Long chatId) {
@@ -307,23 +335,28 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     .chatId(chatId)
                     .parseMode("HTML")
                     .text("""
-                          <b>Welcome to evil hamster bot 🐹</b>
-
-                          Commands:
-                          • <b>/update [N]</b> — показать топ-N по дельте фандинга
-                          • <b>/notification &lt;window&gt; &lt;percent&gt; &lt;interval&gt;</b>
-                            e.g. <code>/notification 30m 1% 60m</code>
-                          • <b>/notification_stop</b> — отключить уведомления
-                          """)
+                            <b>Welcome to evil hamster bot 🐹</b>
+                            
+                            Commands:
+                            • <b>/update [N]</b> — показать топ-N по дельте фандинга
+                            • <b>/notification &lt;window&gt; &lt;percent&gt; &lt;interval&gt;</b>
+                              e.g. <code>/notification 30m 1% 60m</code>
+                            • <b>/notification_stop</b> — отключить уведомления
+                            """)
                     .replyMarkup(updateKeyboard(10))
                     .build());
             execute(PinChatMessage.builder()
                     .chatId(chatId)
                     .messageId(response.getMessageId())
                     .build());
-        } catch (TelegramApiException e) { e.printStackTrace(); }
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
-    public String getBotUsername() { return properties.getBotName(); }
+    public String getBotUsername() {
+        return properties.getBotName();
+    }
 }
+
