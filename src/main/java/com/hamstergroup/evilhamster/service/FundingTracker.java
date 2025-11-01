@@ -31,18 +31,21 @@ public class FundingTracker {
     // ===== Model =====
     public record Funding(String exchange,
                           String symbol,
-                          double rate,             // as fraction (0.001 == 0.1%)
-                          double price,            // last/mark/index price if available, NaN if not
-                          Long nextFundingTimeMs,  // millis epoch if API provides (or estimated)
-                          boolean nextTimeEstimated) {}
+                          double rate,           // as fraction (0.001 == 0.1%)
+                          double price,          // last/mark/index price if available, NaN if not
+                          Long nextFundingTimeMs, // millis epoch if API provides (or estimated)
+                          boolean nextTimeEstimated) {
+    }
 
     public record FundingDiff(String base,
-                              Funding max,          // instrument with highest rate for this base
-                              Funding min,          // instrument with lowest rate for this base
-                              double diffPct) {}    // (max.rate - min.rate) * 100
+                              Funding max,        // instrument with highest rate for this base
+                              Funding min,        // instrument with lowest rate for this base
+                              double diffPct) {   // (max.rate - min.rate) * 100
+    }
 
     interface ExchangeAdapter {
         String name();
+
         List<Funding> fetch() throws Exception;
     }
 
@@ -66,11 +69,20 @@ public class FundingTracker {
 
     private static double d(String s) {
         if (s == null || s.isBlank()) return Double.NaN;
-        try { return Double.parseDouble(s); } catch (Exception e) { return Double.NaN; }
+        try {
+            return Double.parseDouble(s);
+        } catch (Exception e) {
+            return Double.NaN;
+        }
     }
+
     private static Long l(String s) {
         if (s == null || s.isBlank()) return null;
-        try { return Long.parseLong(s); } catch (Exception e) { return null; }
+        try {
+            return Long.parseLong(s);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ===== Next funding estimation (if API doesn't provide it) =====
@@ -92,9 +104,11 @@ public class FundingTracker {
     }
 
     // ===== Adapters =====
-
     static class Binance implements ExchangeAdapter {
-        public String name() { return "Binance"; }
+        public String name() {
+            return "Binance";
+        }
+
         public List<Funding> fetch() throws Exception {
             JsonNode arr = getJson("https://fapi.binance.com/fapi/v1/premiumIndex");
             List<Funding> out = new ArrayList<>();
@@ -111,7 +125,10 @@ public class FundingTracker {
     }
 
     static class Bybit implements ExchangeAdapter {
-        public String name() { return "Bybit"; }
+        public String name() {
+            return "Bybit";
+        }
+
         public List<Funding> fetch() throws Exception {
             JsonNode root = getJson("https://api.bybit.com/v5/market/tickers?category=linear");
             JsonNode list = root.path("result").path("list");
@@ -122,9 +139,7 @@ public class FundingTracker {
                 double price = d(n.path("lastPrice").asText(null));
                 Long next = null;
                 if (n.has("nextFundingTime") && !n.get("nextFundingTime").isNull())
-                    next = n.get("nextFundingTime").isNumber()
-                            ? n.get("nextFundingTime").asLong()
-                            : l(n.get("nextFundingTime").asText());
+                    next = n.get("nextFundingTime").isNumber() ? n.get("nextFundingTime").asLong() : l(n.get("nextFundingTime").asText());
                 if (!Double.isNaN(rate)) out.add(new Funding(name(), symbol, rate, price, next, false));
             }
             return out.stream().map(f -> withEstimatedTime(f, 0)).toList();
@@ -132,7 +147,10 @@ public class FundingTracker {
     }
 
     static class KuCoinFutures implements ExchangeAdapter {
-        public String name() { return "KuCoin"; }
+        public String name() {
+            return "KuCoin";
+        }
+
         public List<Funding> fetch() throws Exception {
             JsonNode root = getJson("https://api-futures.kucoin.com/api/v1/contracts/active");
             JsonNode data = root.path("data");
@@ -150,7 +168,10 @@ public class FundingTracker {
     }
 
     static class GateFutures implements ExchangeAdapter {
-        public String name() { return "Gate.io"; }
+        public String name() {
+            return "Gate.io";
+        }
+
         public List<Funding> fetch() throws Exception {
             JsonNode arr = getJson("https://api.gateio.ws/api/v4/futures/usdt/tickers");
             List<Funding> out = new ArrayList<>();
@@ -160,9 +181,7 @@ public class FundingTracker {
                 double price = d(n.path("last").asText(null));
                 Long next = null;
                 if (n.has("funding_next_apply") && !n.get("funding_next_apply").isNull())
-                    next = n.get("funding_next_apply").isNumber()
-                            ? n.get("funding_next_apply").asLong()
-                            : l(n.get("funding_next_apply").asText());
+                    next = n.get("funding_next_apply").isNumber() ? n.get("funding_next_apply").asLong() : l(n.get("funding_next_apply").asText());
                 if (!Double.isNaN(rate)) out.add(new Funding(name(), symbol, rate, price, next, false));
             }
             return out.stream().map(f -> withEstimatedTime(f, 0)).toList();
@@ -170,7 +189,10 @@ public class FundingTracker {
     }
 
     static class Bitget implements ExchangeAdapter {
-        public String name() { return "Bitget"; }
+        public String name() {
+            return "Bitget";
+        }
+
         public List<Funding> fetch() throws Exception {
             JsonNode root = getJson("https://api.bitget.com/api/mix/v1/market/tickers?productType=umcbl");
             JsonNode data = root.path("data");
@@ -182,18 +204,19 @@ public class FundingTracker {
                 if (Double.isNaN(price)) price = d(n.path("lastPrice").asText(null));
                 Long next = null;
                 if (n.has("nextFundingTime") && !n.get("nextFundingTime").isNull())
-                    next = n.get("nextFundingTime").isNumber()
-                            ? n.get("nextFundingTime").asLong()
-                            : l(n.get("nextFundingTime").asText());
+                    next = n.get("nextFundingTime").isNumber() ? n.get("nextFundingTime").asLong() : l(n.get("nextFundingTime").asText());
                 if (!Double.isNaN(rate)) out.add(new Funding(name(), symbol, rate, price, next, false));
             }
             return out.stream().map(f -> withEstimatedTime(f, 0)).toList();
         }
     }
 
-    // ===== NEW: MEXC (public, has fundingRate in ticker) =====
+    // ===== MEXC =====
     static class Mexc implements ExchangeAdapter {
-        public String name() { return "MEXC"; }
+        public String name() {
+            return "MEXC";
+        }
+
         public List<Funding> fetch() throws Exception {
             JsonNode root = getJson("https://contract.mexc.com/api/v1/contract/ticker");
             List<Funding> out = new ArrayList<>();
@@ -203,44 +226,38 @@ public class FundingTracker {
                     String symbol = n.path("symbol").asText(""); // e.g., BTC_USDT
                     if (!symbol.endsWith("_USDT")) continue;
                     double price = d(n.path("lastPrice").asText(null));
-                    double rate  = d(n.path("fundingRate").asText(null));
-                    if (!Double.isNaN(rate)) {
-                        out.add(new Funding(name(), symbol, rate, price, null, false));
-                    }
+                    double rate = d(n.path("fundingRate").asText(null));
+                    if (!Double.isNaN(rate)) out.add(new Funding(name(), symbol, rate, price, null, false));
                 }
             } else if (data.isObject()) {
                 String symbol = data.path("symbol").asText("");
                 if (symbol.endsWith("_USDT")) {
                     double price = d(data.path("lastPrice").asText(null));
-                    double rate  = d(data.path("fundingRate").asText(null));
-                    if (!Double.isNaN(rate)) {
-                        out.add(new Funding(name(), symbol, rate, price, null, false));
-                    }
+                    double rate = d(data.path("fundingRate").asText(null));
+                    if (!Double.isNaN(rate)) out.add(new Funding(name(), symbol, rate, price, null, false));
                 }
             }
-            // Estimate 8h boundary if next funding time not provided
             return out.stream().map(f -> withEstimatedTime(f, 0)).toList();
         }
     }
 
-    // ===== NEW: BingX (public market funding + tickers) =====
+    // ===== BingX =====
     static class BingX implements ExchangeAdapter {
         public String name() { return "BingX"; }
+
         public List<Funding> fetch() throws Exception {
-            // funding rates
             JsonNode frRoot = getJson("https://open-api.bingx.com/openApi/swap/v2/market/fundingRate");
             JsonNode frData = frRoot.path("data");
             List<Funding> out = new ArrayList<>();
             Map<String, Double> lastPrice = new HashMap<>();
 
-            // tickers (to enrich with price)
             try {
                 JsonNode tkRoot = getJson("https://open-api.bingx.com/openApi/swap/v2/quote/ticker");
                 JsonNode tkData = tkRoot.path("data");
                 if (tkData.isArray()) {
                     for (JsonNode t : tkData) {
-                        String sym = t.path("symbol").asText("");     // e.g., BTC-USDT
-                        double px   = d(t.path("lastPrice").asText(null));
+                        String sym = t.path("symbol").asText(""); // e.g., BTC-USDT
+                        double px = d(t.path("lastPrice").asText(null));
                         if (!Double.isNaN(px)) lastPrice.put(sym, px);
                     }
                 }
@@ -253,92 +270,132 @@ public class FundingTracker {
                     if (!norm.endsWith("USDT")) continue;
 
                     double rate = d(n.path("fundingRate").asText(null));
-                    Long next   = n.hasNonNull("nextSettleTime")
-                            ? (n.get("nextSettleTime").isNumber()
-                            ? n.get("nextSettleTime").asLong()
-                            : l(n.get("nextSettleTime").asText()))
+                    Long next = n.hasNonNull("nextSettleTime")
+                            ? (n.get("nextSettleTime").isNumber() ? n.get("nextSettleTime").asLong() : l(n.get("nextSettleTime").asText()))
                             : null;
-                    double px   = lastPrice.getOrDefault(symbol, Double.isNaN(Double.NaN) ? Double.NaN : Double.NaN);
-                    if (!Double.isNaN(rate)) {
-                        out.add(new Funding(name(), norm, rate, px, next, false));
-                    }
+                    double px = lastPrice.getOrDefault(symbol, Double.NaN);
+                    if (!Double.isNaN(rate)) out.add(new Funding(name(), norm, rate, px, next, false));
                 }
             }
             return out.stream().map(f -> withEstimatedTime(f, 0)).toList();
         }
     }
 
-    // ===== Placeholders (no public funding endpoint without auth) =====
-    static class LBank implements ExchangeAdapter {
-        public String name() { return "LBank"; }
-        public List<Funding> fetch() { return List.of(); }
-    }
-    // Внутри FundingTracker вместо заглушки:
+    // ===== HTX (Huobi) =====
     static class HTX implements ExchangeAdapter {
         public String name() { return "HTX"; }
 
         public List<Funding> fetch() throws Exception {
-            // 1) Список контрактов USDT-маржи (линейные свопы)
-            //    https://api.hbdm.com/linear-swap-api/v1/swap_contract_info
             JsonNode infoRoot = getJson("https://api.hbdm.com/linear-swap-api/v1/swap_contract_info");
             Set<String> symbols = new HashSet<>();
             JsonNode infoList = infoRoot.path("data");
             if (infoList.isArray()) {
                 for (JsonNode n : infoList) {
-                    // напр. BTC-USDT
-                    String contractCode = n.path("contract_code").asText("");
+                    String contractCode = n.path("contract_code").asText(""); // e.g., BTC-USDT
                     if (contractCode.endsWith("-USDT")) {
-                        // нормализуем под общий стиль: BTC_USDT
-                        symbols.add(contractCode.replace("-", "_"));
+                        symbols.add(contractCode.replace("-", "_")); // BTC_USDT
                     }
                 }
             }
-
-            // 2) Текущие funding rates по контрактам (по одному запросу на символ)
-            // API: /linear-swap-api/v1/swap_funding_rate?contract_code=BTC-USDT
-            // Документация HTX: "linear-swap-api/v1/swap_funding_rate"
             List<Funding> out = new ArrayList<>();
             for (String norm : symbols) {
-                String htxCode = norm.replace("_", "-"); // обратно для вызова API
+                String htxCode = norm.replace("_", "-");
                 try {
                     JsonNode frRoot = getJson("https://api.hbdm.com/linear-swap-api/v1/swap_funding_rate?contract_code=" + htxCode);
                     JsonNode data = frRoot.path("data");
-                    if (data.isObject() || data.isArray()) {
-                        JsonNode node = data.isArray() && data.size() > 0 ? data.get(0) : data;
-                        double rate = d(node.path("funding_rate").asText(null)); // как доля (0.001 = 0.1%)
-                        Long next  = node.hasNonNull("next_funding_time")
-                                ? (node.get("next_funding_time").isNumber()
-                                ? node.get("next_funding_time").asLong()
-                                : l(node.get("next_funding_time").asText()))
-                                : null;
+                    JsonNode node = data.isArray() && data.size() > 0 ? data.get(0) : data;
+                    double rate = d(node.path("funding_rate").asText(null));
+                    Long next = node.hasNonNull("next_funding_time")
+                            ? (node.get("next_funding_time").isNumber() ? node.get("next_funding_time").asLong() : l(node.get("next_funding_time").asText()))
+                            : null;
 
-                        // цену возьмём из тикера (last) — необязательно, но полезно
-                        double price = Double.NaN;
-                        try {
-                            JsonNode tick = getJson("https://api.hbdm.com/linear-swap-ex/market/detail/merged?contract_code=" + htxCode);
-                            price = d(tick.path("tick").path("close").asText(null));
-                        } catch (Exception ignore) {}
+                    double price = Double.NaN;
+                    try {
+                        JsonNode tick = getJson("https://api.hbdm.com/linear-swap-ex/market/detail/merged?contract_code=" + htxCode);
+                        price = d(tick.path("tick").path("close").asText(null));
+                    } catch (Exception ignore) {}
 
-                        if (!Double.isNaN(rate)) {
-                            out.add(new Funding(name(), norm, rate, price, next, false));
-                        }
-                    }
-                } catch (Exception ignore) {
-                    // если конкретный контракт не отдался — пропускаем, продолжаем по остальным
-                }
+                    if (!Double.isNaN(rate)) out.add(new Funding(name(), norm, rate, price, next, false));
+                } catch (Exception ignore) {}
             }
-
-            // если nextFundingTime отсутствует, оценим (HTX — 8ч интервалы)
             return out.stream().map(f -> withEstimatedTime(f, 0)).toList();
         }
     }
-    static class Ourbit implements ExchangeAdapter {
-        public String name() { return "Ourbit"; }
-        public List<Funding> fetch() { return List.of(); }
+
+    // ===== Placeholders previously present =====
+    static class LBank implements ExchangeAdapter {
+        public String name() {
+            return "LBank";
+        }
+        public List<Funding> fetch() {
+            // TODO: add when public funding endpoint is available or via authorized API
+            return List.of();
+        }
     }
+
+    static class Ourbit implements ExchangeAdapter {
+        public String name() {
+            return "Ourbit";
+        }
+        public List<Funding> fetch() {
+            // TODO: add when public funding endpoint is available
+            return List.of();
+        }
+    }
+
     static class Coinbase implements ExchangeAdapter {
-        public String name() { return "Coinbase"; }
-        public List<Funding> fetch() { return List.of(); }
+        public String name() {
+            return "Coinbase";
+        }
+        public List<Funding> fetch() {
+            // TODO: Coinbase INTX funding endpoints typically require auth/onboarding
+            return List.of();
+        }
+    }
+
+    // ===== NEW DEX ADAPTERS (HTTP-only skeletons; fill real endpoints when available) =====
+    static class Hyperliquid implements ExchangeAdapter {
+        public String name() { return "Hyperliquid"; }
+        public List<Funding> fetch() throws Exception {
+            // NOTE: Hyperliquid info API is POST-based; if you decide to use it,
+            // switch getJson to a POST helper and parse current funding per market.
+            // For now, keep placeholder (compiles, safe).
+            return List.of();
+        }
+    }
+
+    static class ApeX implements ExchangeAdapter {
+        public String name() { return "ApeX"; }
+        public List<Funding> fetch() throws Exception {
+            // TODO: Insert public endpoint for current funding (ApeX Pro / Omni).
+            // Many routes require auth; if funding available publicly, parse here.
+            return List.of();
+        }
+    }
+
+    static class Aster implements ExchangeAdapter {
+        public String name() { return "Aster"; }
+        public List<Funding> fetch() throws Exception {
+            // TODO: Use REST/WS market data if public "funding rate" endpoint is exposed.
+            return List.of();
+        }
+    }
+
+    static class Paradex implements ExchangeAdapter {
+        public String name() { return "Paradex"; }
+        public List<Funding> fetch() throws Exception {
+            // NOTE: Paradex exposes funding primarily via WebSocket streams.
+            // This HTTP-only tracker keeps it as a placeholder unless WS is added.
+            return List.of();
+        }
+    }
+
+    static class Lighter implements ExchangeAdapter {
+        public String name() { return "Lighter"; }
+        public List<Funding> fetch() throws Exception {
+            // TODO: Add public endpoint parsing for current funding once confirmed.
+            return List.of();
+        }
     }
 
     // ===== Helpers =====
@@ -348,10 +405,11 @@ public class FundingTracker {
             case "Gate.io":
             case "MEXC":
             case "BingX":
-                if (symbol.contains("_")) return symbol.split("_")[0]; // BTC_USDT
-                break;
+            case "HTX":
+                if (symbol.contains("_")) return symbol.split("_")[0];
+                break; // BTC_USDT
             case "Bitget":
-                if (symbol.contains("_")) symbol = symbol.substring(0, symbol.indexOf('_')); // BTCUSDT_UMCBL -> BTCUSDT
+                if (symbol.contains("_")) symbol = symbol.substring(0, symbol.indexOf('_'));
                 if (symbol.endsWith("USDT")) return symbol.substring(0, symbol.length() - 4);
                 break;
             case "KuCoin":
@@ -367,8 +425,11 @@ public class FundingTracker {
     public List<FundingDiff> topDifferences(int topN) throws Exception {
         List<ExchangeAdapter> adapters = List.of(
                 new Binance(), new Bybit(), new KuCoinFutures(), new GateFutures(), new Bitget(),
-                new Mexc(), new BingX(),
-                new LBank(), new HTX(), new Ourbit(), new Coinbase()
+                new Mexc(), new BingX(), new HTX(),
+                // DEX additions (placeholders until real endpoints wired):
+                new Hyperliquid(), new ApeX(), new Aster(), new Paradex(), new Lighter(),
+                // previously requested placeholders:
+                new LBank(), new Ourbit(), new Coinbase()
         );
 
         ExecutorService pool = Executors.newFixedThreadPool(adapters.size());
@@ -377,8 +438,9 @@ public class FundingTracker {
             List<Future<List<Funding>>> futures = new ArrayList<>();
             for (ExchangeAdapter a : adapters) {
                 futures.add(pool.submit(() -> {
-                    try { return a.fetch(); }
-                    catch (Exception e) {
+                    try {
+                        return a.fetch();
+                    } catch (Exception e) {
                         System.err.println("[WARN] " + a.name() + " failed: " + e.getMessage());
                         return List.of();
                     }
@@ -412,5 +474,6 @@ public class FundingTracker {
         return out.stream().limit(Math.max(1, topN)).toList();
     }
 }
+
 
 
