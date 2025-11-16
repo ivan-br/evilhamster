@@ -407,6 +407,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
+
     @Override
     public String getBotUsername() {
         return properties.getBotName();
