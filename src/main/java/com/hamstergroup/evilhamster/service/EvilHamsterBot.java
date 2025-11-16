@@ -178,23 +178,29 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     }
 
     // ===== NOTIFICATIONS
+    // Replace your scheduleNotification(...) with this version
     private void scheduleNotification(long chatId, long windowMin, double thresholdPct, long intervalMin) {
         cancelNotification(chatId);
+        final int TOP_SCAN = 10;
 
         Runnable task = () -> {
             try {
-                List<FundingTracker.FundingDiff> top = tracker.topDifferences(10);
-                if (top.isEmpty()) return;
+                var list = tracker.topDifferences(TOP_SCAN);
+                if (list.isEmpty()) return;
 
-                FundingTracker.FundingDiff best = top.get(0);
-                double delta = best.diffPct();
-                long etaMin = Math.min(
-                        etaMinutes(best.max().nextFundingTimeMs()),
-                        etaMinutes(best.min().nextFundingTimeMs())
-                );
-
-                if (Double.compare(delta, thresholdPct) >= 0 && etaMin >= 0 && etaMin <= windowMin) {
-                    sendHtml(chatId, renderAlert(best, thresholdPct, windowMin, etaMin));
+                FundingTracker.FundingDiff match = null;
+                for (var d : list) {
+                    if (shouldNotify(d, windowMin, thresholdPct)) {
+                        match = d;
+                        break;
+                    }
+                }
+                if (match != null) {
+                    long eta = Math.min(
+                            etaMinutes(match.max().nextFundingTimeMs()),
+                            etaMinutes(match.min().nextFundingTimeMs())
+                    );
+                    sendHtml(chatId, renderAlert(match, thresholdPct, windowMin, eta));
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -205,6 +211,54 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         ScheduledFuture<?> f = scheduler.scheduleAtFixedRate(task, 0, period, TimeUnit.MINUTES);
         notificationTasks.put(chatId, f);
     }
+
+    // Add this helper
+    private boolean shouldNotify(FundingTracker.FundingDiff d, long windowMin, double thresholdPct) {
+        // Must meet Δ threshold (already in percent)
+        if (Double.compare(d.diffPct(), thresholdPct) < 0) return false;
+
+        long etaMax = etaMinutes(d.max().nextFundingTimeMs());
+        long etaMin = etaMinutes(d.min().nextFundingTimeMs());
+
+        // If both ETAs unknown, skip
+        if (etaMax < 0 && etaMin < 0) return false;
+
+        // Choose earliest known ETA
+        long eMax = etaMax < 0 ? Long.MAX_VALUE : etaMax;
+        long eMin = etaMin < 0 ? Long.MAX_VALUE : etaMin;
+        boolean maxIsSooner = eMax <= eMin;
+        long earliestEta = Math.min(eMax, eMin);
+
+        // Must be within the time window
+        if (earliestEta > windowMin) return false;
+
+        // Compare rates (use percent units in comparisons for clarity)
+        double rMaxPct = d.max().rate() * 100.0;
+        double rMinPct = d.min().rate() * 100.0;
+
+        double rSooner = maxIsSooner ? rMaxPct : rMinPct;
+        double rLater  = maxIsSooner ? rMinPct : rMaxPct;
+
+        // Decision rules:
+        // - If both negative -> compare absolute values
+        // - If different signs -> compare raw values (bigger value has priority)
+        // - If both positive/zero -> compare raw values
+        if (rSooner < 0 && rLater < 0) {
+            return Math.abs(rSooner) >= Math.abs(rLater);
+        } else if ((rSooner < 0 && rLater >= 0) || (rSooner >= 0 && rLater < 0)) {
+            return rSooner >= rLater; // bigger numeric value should happen first
+        } else {
+            return rSooner >= rLater; // both >= 0
+        }
+    }
+
+    // (unchanged)
+    private static long etaMinutes(Long ms) {
+        if (ms == null) return -1;
+        long d = ms - System.currentTimeMillis();
+        return d <= 0 ? 0 : d / 60000;
+    }
+
 
     private void cancelNotification(long chatId) {
         Optional.ofNullable(notificationTasks.remove(chatId)).ifPresent(f -> f.cancel(true));
@@ -288,12 +342,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         long m = delta / 60000, h = m / 60, r = m % 60;
         String s = (h > 48) ? (h / 24) + "d " + (h % 24) + "h" : (h > 0 ? h + "h " + r + "m" : r + "m");
         return estimated ? "≈" + s : s;
-    }
-
-    private static long etaMinutes(Long ms) {
-        if (ms == null) return -1;
-        long d = ms - System.currentTimeMillis();
-        return d <= 0 ? 0 : d / 60000;
     }
 
     private static long parseDurationToMinutes(String token) {
