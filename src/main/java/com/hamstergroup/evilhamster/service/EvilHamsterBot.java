@@ -136,37 +136,41 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     }
 
     // ===== PUBLIC REPORT UI (TABLE FORMAT LIKE NOTIFICATIONS) =====
+// ЗАМЕНИТЕ этим метод buildFormattedReport в EvilHamsterBot
     private String buildFormattedReport(int topN) throws Exception {
         List<FundingTracker.FundingDiff> top = tracker.topDifferences(topN);
-        String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-                .withZone(ZoneOffset.UTC).format(Instant.now());
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("<b>🔎 Funding scan (top ").append(topN).append(")</b>\n")
-                .append("<i>UTC: ").append(ts).append("</i>\n\n");
+        // заголовок таблицы (единая таблица для всех монет)
+        String head = String.format(
+                "%-8s | %6s | %-6s | %10s | %9s | %6s | %-6s | %10s | %9s | %6s%n",
+                "Coin", "Δ%", "MaxEx", "MaxPx", "MaxFund", "ETA",
+                "MinEx", "MinPx", "MinFund", "ETA"
+        );
 
+        StringBuilder body = new StringBuilder();
         for (FundingTracker.FundingDiff diff : top) {
-            FundingTracker.Funding mx = diff.max(), mn = diff.min();
+            var mx = diff.max();
+            var mn = diff.min();
 
-            // header line with base + delta
-            sb.append("• <b>").append(esc(diff.base()))
-                    .append("</b> — Δ <code>").append(fmt(diff.diffPct())).append("%</code>\n");
-
-            // two-row table (like alert card)
-            String head = String.format("%-8s | %-12s | %-10s | %-8s%n", "Exch.", "Price", "Funding", "ETA");
-            String row1 = String.format("%-8s | %-12s | %-10s | %-8s%n",
-                    cut(mx.exchange(),8), fmt(mx.price()), fmt(mx.rate()*100)+"%", fmtCountdown(mx.nextFundingTimeMs()));
-            String row2 = String.format("%-8s | %-12s | %-10s | %-8s%n",
-                    cut(mn.exchange(),8), fmt(mn.price()), fmt(mn.rate()*100)+"%", fmtCountdown(mn.nextFundingTimeMs()));
-
-            sb.append("<pre><code>")
-                    .append(head)
-                    .append(row1)
-                    .append(row2)
-                    .append("</code></pre>\n");
+            String row = String.format(
+                    "%-8s | %6s | %-6s | %10s | %9s | %6s | %-6s | %10s | %9s | %6s%n",
+                    cut(diff.base(), 8),
+                    fmt(diff.diffPct()),
+                    cut(mx.exchange(), 6),
+                    fmt(mx.price()),
+                    fmt(mx.rate() * 100) + "%",
+                    fmtCountdown(mx.nextFundingTimeMs()),
+                    cut(mn.exchange(), 6),
+                    fmt(mn.price()),
+                    fmt(mn.rate() * 100) + "%",
+                    fmtCountdown(mn.nextFundingTimeMs())
+            );
+            body.append(row);
         }
-        return sb.toString();
+
+        return "<pre><code>" + head + body + "</code></pre>";
     }
+
 
     private void sendHtmlWithUpdateButton(Long chatId, String html, int topN) {
         try {
