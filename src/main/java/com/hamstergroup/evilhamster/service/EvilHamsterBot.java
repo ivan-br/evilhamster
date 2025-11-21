@@ -25,21 +25,21 @@ import java.util.regex.Pattern;
 @Component
 public class EvilHamsterBot extends TelegramLongPollingBot {
     private static final String CB_PREFIX = "UPDATE_TOP_N:";
-    private static final int    DEFAULT_TOP = 10;
+    private static final int DEFAULT_TOP = 10;
 
     private final HamsterConfigProperties properties;
     private final FundingTracker tracker = new FundingTracker();
 
+    // ===== Per-chat settings =====
+    private final Map<Long, Integer> scanTopN = new ConcurrentHashMap<>();
+    private int getTopN(long chatId) { return scanTopN.getOrDefault(chatId, DEFAULT_TOP); }
+
     // ===== Scheduling state per chat =====
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
-    // hourly scan task (runs exactly at :00 every hour)
     private final Map<Long, ScheduledFuture<?>> hourlyTasks = new ConcurrentHashMap<>();
-    // one-shot pre-notification (earliestETA - 30m)
     private final Map<Long, ScheduledFuture<?>> preNotifyTasks = new ConcurrentHashMap<>();
-    // whether notifications are on
     private final Set<Long> notificationsEnabled =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Long, Boolean>());
-
 
     // constants
     private static final long WINDOW_MIN = 30;        // notify exactly 30 minutes before
@@ -70,7 +70,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             if (text.startsWith("/update")) {
                 int topN = DEFAULT_TOP;
                 String[] parts = text.split("\\s+");
-                if (parts.length >= 2) try { topN = Math.max(1, Integer.parseInt(parts[1])); } catch (Exception ignored) {}
+                if (parts.length >= 2) {
+                    try { topN = Math.max(1, Integer.parseInt(parts[1])); } catch (Exception ignored) {}
+                }
+                scanTopN.put(chatId, topN); // запоминаем выбор пользователя
                 String html = buildFormattedReport(topN);
                 sendHtmlWithUpdateButton(chatId, html, topN);
                 return;
@@ -85,9 +88,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             if (text.startsWith("/notification")) {
                 enableNotifications(chatId);
                 sendText(chatId,
-                        "🔔 Уведомления включены: бот будет присылать алёрт ровно за 30 минут до фандинга,\n" +
-                                "если Δ ≥ 1% и выполняется правило приоритета по времени/величине.");
-                // run an immediate scan so we can schedule the first pre-notify without waiting for next full hour
+                        "🔔 Уведомления включены: бот пришлёт алёрт ровно за 30 минут до фандинга,\n" +
+                                "если Δ ≥ 1% и выполняется правило приоритета по времени/величине.\n" +
+                                "Текущее N для авто-проверки: " + getTopN(chatId));
+                // моментальный скан, чтобы не ждать ближайшего полного часа
                 schedulePreNotifyFromScan(chatId);
                 return;
             }
@@ -105,8 +109,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         String data = cb.getData() == null ? "" : cb.getData();
         if (!data.startsWith(CB_PREFIX)) return;
 
-        int topN = DEFAULT_TOP;
+        long chatId = cb.getMessage().getChatId();
+        int topN = getTopN(chatId);
         try { topN = Integer.parseInt(data.substring(CB_PREFIX.length())); } catch (Exception ignored) {}
+        scanTopN.put(chatId, topN); // сохраняем, чтобы авто-сканы/уведомления использовали это N
 
         try {
             String html = buildFormattedReport(topN);
@@ -188,7 +194,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     // ===== NOTIFICATION ENGINE =====
     private void enableNotifications(long chatId) {
         notificationsEnabled.add(chatId);
-        // start hourly scan aligned to the next top-of-hour
         restartHourly(chatId);
     }
 
@@ -216,37 +221,30 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     /** Run a scan now, pick qualifying pairs, and schedule a single pre-notify at (earliestETA - 30m). */
     private void schedulePreNotifyFromScan(long chatId) {
         try {
-            var list = tracker.topDifferences(100);
-            // choose candidates that satisfy timing rule and Δ≥1%
+            var list = tracker.topDifferences(getTopN(chatId));
             List<Candidate> candidates = new ArrayList<>();
             for (var d : list) {
                 long etaMax = etaMinutes(d.max().nextFundingTimeMs());
                 long etaMin = etaMinutes(d.min().nextFundingTimeMs());
                 if (etaMax < 0 && etaMin < 0) continue;
 
-                // earliest ETA in minutes
                 long eMax = etaMax < 0 ? Long.MAX_VALUE : etaMax;
                 long eMin = etaMin < 0 ? Long.MAX_VALUE : etaMin;
                 long earliest = Math.min(eMax, eMin);
 
                 if (Double.compare(d.diffPct(), THRESHOLD_PCT) < 0) continue;
-
                 if (qualifiesByTimingRule(d, eMax, eMin)) {
                     candidates.add(new Candidate(d, earliest));
                 }
             }
             if (candidates.isEmpty()) return;
 
-            // pick soonest earliestETA
             candidates.sort(Comparator.comparingLong(c -> c.earliestEtaMin));
             Candidate best = candidates.get(0);
 
-            long delayMin = best.earliestEtaMin - WINDOW_MIN;  // 30-minute window
-            if (delayMin < 0) {
-                // we are already inside the window — try to send soon (small grace)
-                delayMin = 0;
-            }
-            // schedule one-shot; replace previous one if exists
+            long delayMin = best.earliestEtaMin - WINDOW_MIN;
+            if (delayMin < 0) delayMin = 0;
+
             Optional.ofNullable(preNotifyTasks.remove(chatId)).ifPresent(s -> s.cancel(true));
             ScheduledFuture<?> oneShot = scheduler.schedule(() -> firePreNotify(chatId), delayMin, TimeUnit.MINUTES);
             preNotifyTasks.put(chatId, oneShot);
@@ -259,9 +257,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     /** Execute right before notification time: refresh data, validate again, and send once if still valid. */
     private void firePreNotify(long chatId) {
         try {
-            var list = tracker.topDifferences(100);
-            // window tolerance: send when earliest ETA is within [0 .. 35] minutes (covers slight drifts)
-            final long TOLERANCE_MAX = WINDOW_MIN + 5;
+            var list = tracker.topDifferences(getTopN(chatId));
+            final long TOLERANCE_MAX = WINDOW_MIN + 5; // до 35 минут на случай сдвигов
 
             for (var d : list) {
                 long etaMax = etaMinutes(d.max().nextFundingTimeMs());
@@ -276,24 +273,21 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 if (!qualifiesByTimingRule(d, eMax, eMin)) continue;
 
                 if (earliest <= TOLERANCE_MAX) {
-                    // build alert (single pair) and send
                     long eta = earliest;
                     sendHtml(chatId, renderAlertCard(d, eta));
-                    break; // only one notification
+                    break; // отправляем один раз
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            // clear the one-shot; next schedule comes from the hourly runner
             preNotifyTasks.remove(chatId);
         }
     }
 
     /** Timing rule from your examples. */
     private boolean qualifiesByTimingRule(FundingTracker.FundingDiff d, long eMax, long eMin) {
-        // if times (roughly) equal → qualifies
-        if (Math.abs(eMax - eMin) <= 2) return true; // 2-minute tolerance
+        if (Math.abs(eMax - eMin) <= 2) return true; // почти одновременный фандинг
 
         boolean maxSooner = eMax <= eMin;
         double rMax = d.max().rate() * 100.0;
@@ -302,36 +296,31 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         double rLater  = maxSooner ? rMin : rMax;
 
         if (rSooner < 0 && rLater < 0) {
-            // both negative → abs dominance
-            return Math.abs(rSooner) >= Math.abs(rLater);
+            return Math.abs(rSooner) >= Math.abs(rLater); // оба отрицательные — сравниваем по модулю
         } else {
-            // different signs OR both >= 0 → raw comparison
-            return rSooner >= rLater;
+            return rSooner >= rLater; // разные знаки или оба >=0 — обычное сравнение
         }
     }
 
-    // ===== ALERT RENDERING (format similar to your screenshot) =====
+    // ===== ALERT RENDERING (похоже на ваш скрин) =====
     private String renderAlertCard(FundingTracker.FundingDiff d, long etaSoonestMin) {
         FundingTracker.Funding mx = d.max(), mn = d.min();
 
-        // Header (RU)
-        ZoneId zone = ZoneId.systemDefault(); // your server TZ; change if needed
+        ZoneId zone = ZoneId.systemDefault();
         String ts = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm")
                 .withZone(zone).format(Instant.now());
 
         StringBuilder sb = new StringBuilder();
         sb.append("<b>🛑⚡ Алерт (Осталось ~").append(etaSoonestMin).append(" мин): ")
-                .append(esc(d.base())).append(" на ").append(esc(mx.exchange()))
-                .append("</b>  (Порог: 1.0%, Время: 30 мин)\n")
-                .append("Token: <b>").append(esc(d.base()))
-                .append("</b> (Source: ").append(esc(mx.exchange())).append(") | Date: ").append(ts).append("\n\n");
+                .append(esc(d.base())).append("</b>\n")
+                .append("Δ: <code>").append(fmt(d.diffPct())).append("%</code>  |  Порог: 1.0%  |  Окно: 30 мин\n")
+                .append("Дата: ").append(ts).append("\n\n");
 
-        // Table
-        String head = String.format("%-6s | %-10s | %-9s | %-8s%n", "Exc.", "Price", "Funding", "Countd.");
-        String row1 = String.format("%-6s | %-10s | %-9s | %-8s%n",
-                cut(mx.exchange(),6), fmt(mx.price()), fmt(mx.rate()*100)+"%", fmtCountdown(mx.nextFundingTimeMs()));
-        String row2 = String.format("%-6s | %-10s | %-9s | %-8s%n",
-                cut(mn.exchange(),6), fmt(mn.price()), fmt(mn.rate()*100)+"%", fmtCountdown(mn.nextFundingTimeMs()));
+        String head = String.format("%-8s | %-12s | %-10s | %-8s%n", "Exch.", "Price", "Funding", "ETA");
+        String row1 = String.format("%-8s | %-12s | %-10s | %-8s%n",
+                cut(mx.exchange(),8), fmt(mx.price()), fmt(mx.rate()*100)+"%", fmtCountdown(mx.nextFundingTimeMs()));
+        String row2 = String.format("%-8s | %-12s | %-10s | %-8s%n",
+                cut(mn.exchange(),8), fmt(mn.price()), fmt(mn.rate()*100)+"%", fmtCountdown(mn.nextFundingTimeMs()));
 
         sb.append("<pre><code>")
                 .append(head)
@@ -414,7 +403,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         try {
             String instruction = """
                 Commands:
-                • /update [N] — show top-N pairs by funding spread
+                • /update [N] — show top-N pairs by funding spread (also sets N for auto checks)
                 • /notification — enable alerts (Δ≥1%) exactly 30 minutes before funding
                 • /notification_stop — disable alerts
 
@@ -440,7 +429,9 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     }
 
     @Override
-    public String getBotUsername() { return properties.getBotName(); }
+    public String getBotUsername() {
+        return properties.getBotName();
+    }
 
     // ===== Internal holder =====
     private static final class Candidate {
