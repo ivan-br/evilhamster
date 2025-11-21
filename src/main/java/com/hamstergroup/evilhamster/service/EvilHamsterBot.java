@@ -73,7 +73,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 if (parts.length >= 2) {
                     try { topN = Math.max(1, Integer.parseInt(parts[1])); } catch (Exception ignored) {}
                 }
-                scanTopN.put(chatId, topN); // запоминаем выбор пользователя
+                scanTopN.put(chatId, topN); // remember user choice for auto checks
                 String html = buildFormattedReport(topN);
                 sendHtmlWithUpdateButton(chatId, html, topN);
                 return;
@@ -91,7 +91,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                         "🔔 Уведомления включены: бот пришлёт алёрт ровно за 30 минут до фандинга,\n" +
                                 "если Δ ≥ 1% и выполняется правило приоритета по времени/величине.\n" +
                                 "Текущее N для авто-проверки: " + getTopN(chatId));
-                // моментальный скан, чтобы не ждать ближайшего полного часа
+                // immediate scan so we don’t wait for the next full hour
                 schedulePreNotifyFromScan(chatId);
                 return;
             }
@@ -112,7 +112,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         long chatId = cb.getMessage().getChatId();
         int topN = getTopN(chatId);
         try { topN = Integer.parseInt(data.substring(CB_PREFIX.length())); } catch (Exception ignored) {}
-        scanTopN.put(chatId, topN); // сохраняем, чтобы авто-сканы/уведомления использовали это N
+        scanTopN.put(chatId, topN);
 
         try {
             String html = buildFormattedReport(topN);
@@ -135,7 +135,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    // ===== PUBLIC REPORT UI =====
+    // ===== PUBLIC REPORT UI (TABLE FORMAT LIKE NOTIFICATIONS) =====
     private String buildFormattedReport(int topN) throws Exception {
         List<FundingTracker.FundingDiff> top = tracker.topDifferences(topN);
         String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -148,24 +148,22 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         for (FundingTracker.FundingDiff diff : top) {
             FundingTracker.Funding mx = diff.max(), mn = diff.min();
 
+            // header line with base + delta
             sb.append("• <b>").append(esc(diff.base()))
                     .append("</b> — Δ <code>").append(fmt(diff.diffPct())).append("%</code>\n");
 
-            sb.append("  Max: <b>").append(esc(mx.exchange())).append("</b> ")
-                    .append("<code>").append(esc(mx.symbol())).append("</code>")
-                    .append(" — <code>").append(fmt(mx.rate()*100)).append("%</code>")
-                    .append(" (").append(formatEta(mx.nextFundingTimeMs(), mx.nextTimeEstimated())).append(")");
-            if (!Double.isNaN(mx.price()))
-                sb.append(" • Px: <code>").append(fmt(mx.price())).append("</code>");
-            sb.append("\n");
+            // two-row table (like alert card)
+            String head = String.format("%-8s | %-12s | %-10s | %-8s%n", "Exch.", "Price", "Funding", "ETA");
+            String row1 = String.format("%-8s | %-12s | %-10s | %-8s%n",
+                    cut(mx.exchange(),8), fmt(mx.price()), fmt(mx.rate()*100)+"%", fmtCountdown(mx.nextFundingTimeMs()));
+            String row2 = String.format("%-8s | %-12s | %-10s | %-8s%n",
+                    cut(mn.exchange(),8), fmt(mn.price()), fmt(mn.rate()*100)+"%", fmtCountdown(mn.nextFundingTimeMs()));
 
-            sb.append("  Min: <b>").append(esc(mn.exchange())).append("</b> ")
-                    .append("<code>").append(esc(mn.symbol())).append("</code>")
-                    .append(" — <code>").append(fmt(mn.rate()*100)).append("%</code>")
-                    .append(" (").append(formatEta(mn.nextFundingTimeMs(), mn.nextTimeEstimated())).append(")");
-            if (!Double.isNaN(mn.price()))
-                sb.append(" • Px: <code>").append(fmt(mn.price())).append("</code>");
-            sb.append("\n\n");
+            sb.append("<pre><code>")
+                    .append(head)
+                    .append(row1)
+                    .append(row2)
+                    .append("</code></pre>\n");
         }
         return sb.toString();
     }
@@ -177,6 +175,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     .parseMode("HTML")
                     .text(html)
                     .replyMarkup(updateKeyboard(topN))
+                    .disableWebPagePreview(true)
                     .build());
         } catch (TelegramApiException e) { e.printStackTrace(); }
     }
@@ -191,7 +190,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         return kb;
     }
 
-    // ===== NOTIFICATION ENGINE =====
+    // ===== NOTIFICATION ENGINE (unchanged from previous message) =====
     private void enableNotifications(long chatId) {
         notificationsEnabled.add(chatId);
         restartHourly(chatId);
@@ -218,7 +217,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         hourlyTasks.put(chatId, f);
     }
 
-    /** Run a scan now, pick qualifying pairs, and schedule a single pre-notify at (earliestETA - 30m). */
     private void schedulePreNotifyFromScan(long chatId) {
         try {
             var list = tracker.topDifferences(getTopN(chatId));
@@ -254,11 +252,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    /** Execute right before notification time: refresh data, validate again, and send once if still valid. */
     private void firePreNotify(long chatId) {
         try {
             var list = tracker.topDifferences(getTopN(chatId));
-            final long TOLERANCE_MAX = WINDOW_MIN + 5; // до 35 минут на случай сдвигов
+            final long TOLERANCE_MAX = WINDOW_MIN + 5;
 
             for (var d : list) {
                 long etaMax = etaMinutes(d.max().nextFundingTimeMs());
@@ -275,7 +272,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 if (earliest <= TOLERANCE_MAX) {
                     long eta = earliest;
                     sendHtml(chatId, renderAlertCard(d, eta));
-                    break; // отправляем один раз
+                    break;
                 }
             }
         } catch (Exception e) {
@@ -285,9 +282,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    /** Timing rule from your examples. */
     private boolean qualifiesByTimingRule(FundingTracker.FundingDiff d, long eMax, long eMin) {
-        if (Math.abs(eMax - eMin) <= 2) return true; // почти одновременный фандинг
+        if (Math.abs(eMax - eMin) <= 2) return true; // nearly same time
 
         boolean maxSooner = eMax <= eMin;
         double rMax = d.max().rate() * 100.0;
@@ -296,13 +292,13 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         double rLater  = maxSooner ? rMin : rMax;
 
         if (rSooner < 0 && rLater < 0) {
-            return Math.abs(rSooner) >= Math.abs(rLater); // оба отрицательные — сравниваем по модулю
+            return Math.abs(rSooner) >= Math.abs(rLater);
         } else {
-            return rSooner >= rLater; // разные знаки или оба >=0 — обычное сравнение
+            return rSooner >= rLater;
         }
     }
 
-    // ===== ALERT RENDERING (похоже на ваш скрин) =====
+    // ===== ALERT RENDERING =====
     private String renderAlertCard(FundingTracker.FundingDiff d, long etaSoonestMin) {
         FundingTracker.Funding mx = d.max(), mn = d.min();
 
