@@ -146,8 +146,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             FundingTracker.Funding mx = diff.max(), mn = diff.min();
 
             // Заголовок монеты с дельтой
-            sb.append("• <b>").append(esc(diff.base()))
-                    .append("</b> — Δ <code>").append(fmt(diff.diffPct())).append("%</code>\n");
+            sb.append("<b>").append(esc(diff.base()))
+                    .append("</b>: Δ <code>").append(fmt(diff.diffPct())).append("%</code>\n");
 
             // Более компактная таблица: минимум пробелов в цене
             // Колонки: Exch|Price|Fund|ETA
