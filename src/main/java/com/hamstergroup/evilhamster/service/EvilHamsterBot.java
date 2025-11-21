@@ -135,29 +135,27 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    // ===== PUBLIC REPORT UI (TABLE FORMAT LIKE NOTIFICATIONS) =====
+    // ===== PUBLIC REPORT UI (compact tables per coin) =====
     private String buildFormattedReport(int topN) throws Exception {
         List<FundingTracker.FundingDiff> top = tracker.topDifferences(topN);
-        String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-                .withZone(ZoneOffset.UTC).format(Instant.now());
 
         StringBuilder sb = new StringBuilder();
-        sb.append("<b>🔎 Funding scan (top ").append(topN).append(")</b>\n")
-                .append("<i>UTC: ").append(ts).append("</i>\n\n");
+        // убрали общий заголовок и строку UTC
 
         for (FundingTracker.FundingDiff diff : top) {
             FundingTracker.Funding mx = diff.max(), mn = diff.min();
 
-            // header line with base + delta
+            // Заголовок монеты с дельтой
             sb.append("• <b>").append(esc(diff.base()))
                     .append("</b> — Δ <code>").append(fmt(diff.diffPct())).append("%</code>\n");
 
-            // two-row table (like alert card)
-            String head = String.format("%-8s | %-12s | %-10s | %-8s%n", "Exch.", "Price", "Funding", "ETA");
-            String row1 = String.format("%-8s | %-12s | %-10s | %-8s%n",
-                    cut(mx.exchange(),8), fmt(mx.price()), fmt(mx.rate()*100)+"%", fmtCountdown(mx.nextFundingTimeMs()));
-            String row2 = String.format("%-8s | %-12s | %-10s | %-8s%n",
-                    cut(mn.exchange(),8), fmt(mn.price()), fmt(mn.rate()*100)+"%", fmtCountdown(mn.nextFundingTimeMs()));
+            // Более компактная таблица: минимум пробелов в цене
+            // Колонки: Exch|Price|Fund|ETA
+            String head = String.format("%-6s|%s|%s|%s%n", "Exch", "Price", "Fund", "ETA");
+            String row1 = String.format("%-6s|%s|%s|%s%n",
+                    cut(mx.exchange(),6), fmt(mx.price()), fmt(mx.rate()*100) + "%", fmtCountdown(mx.nextFundingTimeMs()));
+            String row2 = String.format("%-6s|%s|%s|%s%n",
+                    cut(mn.exchange(),6), fmt(mn.price()), fmt(mn.rate()*100) + "%", fmtCountdown(mn.nextFundingTimeMs()));
 
             sb.append("<pre><code>")
                     .append(head)
@@ -190,7 +188,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         return kb;
     }
 
-    // ===== NOTIFICATION ENGINE (unchanged from previous message) =====
+    // ===== NOTIFICATION ENGINE (unchanged) =====
     private void enableNotifications(long chatId) {
         notificationsEnabled.add(chatId);
         restartHourly(chatId);
