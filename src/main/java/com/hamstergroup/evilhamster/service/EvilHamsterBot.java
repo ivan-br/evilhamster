@@ -118,7 +118,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             switch (data) {
                 case CALLBACK_SET_THRESHOLD -> {
                     inputModes.put(chatId, InputMode.THRESHOLD);
-                    sendText(chatId, "Enter threshold from 1 to 100. Example: 90");
+                    sendText(chatId, "Enter percent from 1 to 100. Example: 90");
                 }
                 case CALLBACK_SET_INTERVAL -> {
                     inputModes.put(chatId, InputMode.INTERVAL);
@@ -156,13 +156,13 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         try {
             double threshold = Double.parseDouble(text.replace("%", "").replace(",", "."));
             if (threshold < 1.0 || threshold > 100.0) {
-                sendText(chatId, "Threshold must be from 1 to 100.");
+                sendText(chatId, "Percent must be from 1 to 100.");
                 inputModes.put(chatId, InputMode.THRESHOLD);
                 return;
             }
 
             thresholds.put(chatId, threshold);
-            sendMenu(chatId, "Threshold set to " + FundingTracker.formatPercent(threshold) + ".");
+            sendMenu(chatId, "Percent set to " + FundingTracker.formatPercent(threshold) + ".");
             restartPolling(chatId, 0);
         } catch (NumberFormatException e) {
             sendText(chatId, "Please enter a number from 1 to 100. Example: 90");
@@ -368,7 +368,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         if (!title.isBlank()) {
             message.append("<b>").append(escape(title)).append("</b>\n");
         }
-        message.append("Threshold: <code>").append(FundingTracker.formatPercent(threshold)).append("</code>\n");
+        message.append("Percent: <code>").append(FundingTracker.formatPercent(threshold)).append("</code>\n");
         message.append("Min price: <code>").append(priceRange.formatMin()).append("</code>\n");
         message.append("Max price: <code>").append(priceRange.formatMax()).append("</code>\n");
         message.append("Min volume: <code>").append(volumeRange.formatMin()).append("</code>\n");
@@ -376,7 +376,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         message.append("Interval: <code>").append(intervalMinutes).append(" minutes</code>\n\n");
 
         if (moves.isEmpty()) {
-            message.append("<code>No Binance Futures coins are above the threshold.</code>");
+            message.append("<code>No Binance Futures coins are above the percent.</code>");
             return message.toString();
         }
 
@@ -398,7 +398,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
     private void sendMenu(long chatId, String text) {
         String message = text + "\n\n"
-                + "Threshold: " + FundingTracker.formatPercent(getThreshold(chatId)) + "\n"
+                + "Percent: " + FundingTracker.formatPercent(getThreshold(chatId)) + "\n"
                 + "Min price: " + getPriceRange(chatId).formatMin() + "\n"
                 + "Max price: " + getPriceRange(chatId).formatMax() + "\n"
                 + "Min volume: " + getVolumeRange(chatId).formatMin() + "\n"
@@ -409,7 +409,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
     private InlineKeyboardMarkup menuKeyboard() {
         InlineKeyboardButton thresholdButton = InlineKeyboardButton.builder()
-                .text("Specify threshold")
+                .text("Specify percent")
                 .callbackData(CALLBACK_SET_THRESHOLD)
                 .build();
         InlineKeyboardButton intervalButton = InlineKeyboardButton.builder()
