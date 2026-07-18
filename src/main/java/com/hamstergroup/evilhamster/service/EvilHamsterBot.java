@@ -122,7 +122,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 }
                 case CALLBACK_SET_INTERVAL -> {
                     inputModes.put(chatId, InputMode.INTERVAL);
-                    sendText(chatId, "Enter poll interval in minutes. Example: 60");
+                    sendText(chatId, "Enter interval in minutes. Example: 60");
                 }
                 case CALLBACK_SET_PRICE -> {
                     inputModes.put(chatId, InputMode.PRICE_MIN);
@@ -174,16 +174,16 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         try {
             int minutes = Integer.parseInt(text.trim());
             if (minutes < 1) {
-                sendText(chatId, "Poll interval must be at least 1 minute.");
+                sendText(chatId, "Interval must be at least 1 minute.");
                 inputModes.put(chatId, InputMode.INTERVAL);
                 return;
             }
 
             pollIntervals.put(chatId, minutes);
-            sendMenu(chatId, "Poll interval set to " + minutes + " minutes.");
+            sendMenu(chatId, "Interval set to " + minutes + " minutes.");
             restartPolling(chatId, 0);
         } catch (NumberFormatException e) {
-            sendText(chatId, "Please enter the poll interval in minutes. Example: 60");
+            sendText(chatId, "Please enter the interval in minutes. Example: 60");
             inputModes.put(chatId, InputMode.INTERVAL);
         }
     }
@@ -403,17 +403,17 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 + "Max price: " + getPriceRange(chatId).formatMax() + "\n"
                 + "Min volume: " + getVolumeRange(chatId).formatMin() + "\n"
                 + "Max volume: " + getVolumeRange(chatId).formatMax() + "\n"
-                + "Poll interval: " + getPollInterval(chatId) + " minutes";
+                + "Interval: " + getPollInterval(chatId) + " minutes";
         sendText(chatId, message, menuKeyboard());
     }
 
     private InlineKeyboardMarkup menuKeyboard() {
         InlineKeyboardButton thresholdButton = InlineKeyboardButton.builder()
-                .text("Specify percent")
+                .text("Percent")
                 .callbackData(CALLBACK_SET_THRESHOLD)
                 .build();
         InlineKeyboardButton intervalButton = InlineKeyboardButton.builder()
-                .text("Poll interval")
+                .text("Interval")
                 .callbackData(CALLBACK_SET_INTERVAL)
                 .build();
         InlineKeyboardButton priceButton = InlineKeyboardButton.builder()
