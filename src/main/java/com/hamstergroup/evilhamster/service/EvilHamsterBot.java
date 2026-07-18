@@ -302,7 +302,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     volumeRange.min(),
                     volumeRange.max()
             );
-            sendReport(chatId, "Current Binance Futures movers", threshold, priceRange, volumeRange, getPollInterval(chatId), gainers);
+            sendReport(chatId, "", threshold, priceRange, volumeRange, getPollInterval(chatId), gainers);
         } catch (Exception e) {
             sendText(chatId, "Update failed: " + friendlyError(e));
         }
