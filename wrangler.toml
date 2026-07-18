@@ -4,6 +4,12 @@ compatibility_date = "2026-07-18"
 
 [vars]
 BOT_NAME = "altcoins_trade_bot"
+BOT_TOKEN = "8933244482:AAE-smYkAOKmH7YH7zMt51UEWrdqm48_VBQ"
+TELEGRAM_WEBHOOK_SECRET = "evilhamster-secret-123"
+
+[[kv_namespaces]]
+binding = "BOT_STATE"
+id = "d27e3fc7d4e342479f47209a9a2ebdef"
 
 [triggers]
 crons = ["* * * * *"]
