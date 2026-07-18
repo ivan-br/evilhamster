@@ -349,7 +349,17 @@ async function findGainers(state) {
 }
 
 async function readWebSocketJson(url) {
-  const socket = new WebSocket(url);
+  const response = await fetch(url, {
+    headers: {
+      Upgrade: "websocket"
+    }
+  });
+  const socket = response.webSocket;
+  if (!socket) {
+    throw new Error(`WebSocket handshake failed for ${url}`);
+  }
+
+  socket.accept();
   const message = await new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       try {
@@ -569,7 +579,7 @@ function formatVolumeOrAll(value) {
 
 function friendlyError(error) {
   const message = error?.message || String(error);
-  if (message.includes("WebSocket failed") || message.includes("Timed out reading")) {
+  if (message.includes("WebSocket failed") || message.includes("Timed out reading") || message.includes("WebSocket handshake failed")) {
     return "Binance Futures WebSocket market data is unavailable.";
   }
   return message;
