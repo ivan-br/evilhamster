@@ -238,7 +238,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             double threshold = getThreshold(chatId);
             PriceRange priceRange = getPriceRange(chatId);
             List<FundingTracker.CoinMove> gainers = tracker.findGainers(threshold, priceRange.min(), priceRange.max());
-            sendReport(chatId, "Current Binance Futures movers", threshold, priceRange, gainers);
+            sendReport(chatId, "Current Binance Futures movers", threshold, priceRange, getPollInterval(chatId), gainers);
         } catch (Exception e) {
             sendText(chatId, "Update failed: " + friendlyError(e));
         }
@@ -250,7 +250,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             double threshold = getThreshold(chatId);
             PriceRange priceRange = getPriceRange(chatId);
             List<FundingTracker.CoinMove> gainers = tracker.findGainers(threshold, priceRange.min(), priceRange.max());
-            sendReport(chatId, "", threshold, priceRange, gainers);
+            sendReport(chatId, "", threshold, priceRange, getPollInterval(chatId), gainers);
             System.out.println("Scheduled poll sent to chat " + chatId + " with " + gainers.size() + " movers.");
         } catch (Exception e) {
             e.printStackTrace();
@@ -265,9 +265,9 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         return message == null ? e.getClass().getSimpleName() : message;
     }
 
-    private void sendReport(long chatId, String title, double threshold, PriceRange priceRange, List<FundingTracker.CoinMove> moves) {
+    private void sendReport(long chatId, String title, double threshold, PriceRange priceRange, int intervalMinutes, List<FundingTracker.CoinMove> moves) {
         if (moves.size() <= MAX_ROWS_PER_MESSAGE) {
-            sendHtml(chatId, renderReport(title, threshold, priceRange, moves), menuKeyboard());
+            sendHtml(chatId, renderReport(title, threshold, priceRange, intervalMinutes, moves), menuKeyboard());
             return;
         }
 
@@ -277,18 +277,19 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             int to = Math.min(from + MAX_ROWS_PER_MESSAGE, moves.size());
             String partTitle = title.isBlank() ? "" : title + " (" + (part + 1) + "/" + totalParts + ")";
             InlineKeyboardMarkup keyboard = part == totalParts - 1 ? menuKeyboard() : null;
-            sendHtml(chatId, renderReport(partTitle, threshold, priceRange, moves.subList(from, to)), keyboard);
+            sendHtml(chatId, renderReport(partTitle, threshold, priceRange, intervalMinutes, moves.subList(from, to)), keyboard);
         }
     }
 
-    private String renderReport(String title, double threshold, PriceRange priceRange, List<FundingTracker.CoinMove> moves) {
+    private String renderReport(String title, double threshold, PriceRange priceRange, int intervalMinutes, List<FundingTracker.CoinMove> moves) {
         StringBuilder message = new StringBuilder();
         if (!title.isBlank()) {
             message.append("<b>").append(escape(title)).append("</b>\n");
         }
         message.append("Threshold: <code>").append(FundingTracker.formatPercent(threshold)).append("</code>\n");
         message.append("Min price: <code>").append(priceRange.formatMin()).append("</code>\n");
-        message.append("Max price: <code>").append(priceRange.formatMax()).append("</code>\n\n");
+        message.append("Max price: <code>").append(priceRange.formatMax()).append("</code>\n");
+        message.append("Interval: <code>").append(intervalMinutes).append(" minutes</code>\n\n");
 
         if (moves.isEmpty()) {
             message.append("<code>No Binance Futures coins are above the threshold.</code>");
