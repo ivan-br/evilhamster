@@ -8,6 +8,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -21,10 +22,12 @@ import java.util.concurrent.TimeUnit;
 public class FundingTracker {
 
     private static final String BINANCE_FUTURES_WS_BASE_URL = "wss://fstream.binance.com/market/ws/";
+    private static final Duration SNAPSHOT_CACHE_TTL = Duration.ofSeconds(10);
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
     private static final ObjectMapper JSON = new ObjectMapper();
+    private volatile CachedSnapshot cachedSnapshot;
 
     public record CoinMove(String symbol, double price, double fundingPercent, double priceChangePercent) {
     }
@@ -68,6 +71,24 @@ public class FundingTracker {
     }
 
     private MarketSnapshot fetchMarketSnapshot() throws Exception {
+        CachedSnapshot currentSnapshot = cachedSnapshot;
+        if (currentSnapshot != null && currentSnapshot.isFresh()) {
+            return currentSnapshot.marketSnapshot();
+        }
+
+        synchronized (this) {
+            currentSnapshot = cachedSnapshot;
+            if (currentSnapshot != null && currentSnapshot.isFresh()) {
+                return currentSnapshot.marketSnapshot();
+            }
+
+            MarketSnapshot marketSnapshot = readMarketSnapshot();
+            cachedSnapshot = new CachedSnapshot(marketSnapshot, Instant.now());
+            return marketSnapshot;
+        }
+    }
+
+    private MarketSnapshot readMarketSnapshot() throws Exception {
         try {
             return fetchMarketSnapshotFromWebSocket();
         } catch (Exception webSocketError) {
@@ -76,8 +97,17 @@ public class FundingTracker {
     }
 
     private MarketSnapshot fetchMarketSnapshotFromWebSocket() throws Exception {
-        JsonNode tickers = readWebSocketJson(BINANCE_FUTURES_WS_BASE_URL + "!ticker@arr");
-        JsonNode markPrices = readWebSocketJson(BINANCE_FUTURES_WS_BASE_URL + "!markPrice@arr@1s");
+        CompletableFuture<JsonNode> tickersFuture = CompletableFuture.supplyAsync(() ->
+                readWebSocketJsonUnchecked(BINANCE_FUTURES_WS_BASE_URL + "!ticker@arr")
+        );
+        CompletableFuture<JsonNode> markPricesFuture = CompletableFuture.supplyAsync(() ->
+                readWebSocketJsonUnchecked(BINANCE_FUTURES_WS_BASE_URL + "!markPrice@arr@1s")
+        );
+
+        CompletableFuture.allOf(tickersFuture, markPricesFuture).get(30, TimeUnit.SECONDS);
+
+        JsonNode tickers = tickersFuture.getNow(JSON.createArrayNode());
+        JsonNode markPrices = markPricesFuture.getNow(JSON.createArrayNode());
         Map<String, Double> fundingBySymbol = new HashMap<>();
 
         if (markPrices.isArray()) {
@@ -91,6 +121,14 @@ public class FundingTracker {
         }
 
         return new MarketSnapshot(tickers, fundingBySymbol);
+    }
+
+    private static JsonNode readWebSocketJsonUnchecked(String url) {
+        try {
+            return readWebSocketJson(url);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static JsonNode readWebSocketJson(String url) throws Exception {
@@ -156,6 +194,12 @@ public class FundingTracker {
     }
 
     private record MarketSnapshot(JsonNode tickers, Map<String, Double> fundingPercentBySymbol) {
+    }
+
+    private record CachedSnapshot(MarketSnapshot marketSnapshot, Instant createdAt) {
+        boolean isFresh() {
+            return createdAt.plus(SNAPSHOT_CACHE_TTL).isAfter(Instant.now());
+        }
     }
 
     private static final class FirstMessageListener implements WebSocket.Listener {
