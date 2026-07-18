@@ -26,10 +26,14 @@ public class FundingTracker {
             .build();
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    public record CoinMove(String symbol, double fundingPercent, double priceChangePercent) {
+    public record CoinMove(String symbol, double price, double fundingPercent, double priceChangePercent) {
     }
 
     public List<CoinMove> findGainers(double thresholdPercent) throws Exception {
+        return findGainers(thresholdPercent, 0.0, Double.MAX_VALUE);
+    }
+
+    public List<CoinMove> findGainers(double thresholdPercent, double minPrice, double maxPrice) throws Exception {
         MarketSnapshot snapshot = fetchMarketSnapshot();
         Map<String, Double> fundingBySymbol = snapshot.fundingPercentBySymbol();
         JsonNode tickers = snapshot.tickers();
@@ -50,8 +54,13 @@ public class FundingTracker {
                 continue;
             }
 
+            double price = parseDouble(firstText(ticker, "lastPrice", "c"));
+            if (Double.isNaN(price) || price < minPrice || price > maxPrice) {
+                continue;
+            }
+
             double fundingPercent = fundingBySymbol.getOrDefault(symbol, Double.NaN);
-            moves.add(new CoinMove(symbol, fundingPercent, priceChangePercent));
+            moves.add(new CoinMove(symbol, price, fundingPercent, priceChangePercent));
         }
 
         moves.sort(Comparator.comparingDouble(CoinMove::priceChangePercent).reversed());
@@ -131,6 +140,19 @@ public class FundingTracker {
             return "n/a";
         }
         return String.format(Locale.US, "%.4f%%", value);
+    }
+
+    public static String formatPrice(double value) {
+        if (Double.isNaN(value)) {
+            return "n/a";
+        }
+        if (value >= 1_000.0) {
+            return String.format(Locale.US, "%.2f", value);
+        }
+        if (value >= 1.0) {
+            return String.format(Locale.US, "%.4f", value);
+        }
+        return String.format(Locale.US, "%.8f", value);
     }
 
     private record MarketSnapshot(JsonNode tickers, Map<String, Double> fundingPercentBySymbol) {
