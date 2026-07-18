@@ -273,7 +273,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         StringBuilder message = new StringBuilder();
         message.append("<b>").append(escape(title)).append("</b>\n");
         message.append("Threshold: <code>").append(FundingTracker.formatPercent(threshold)).append("</code>\n");
-        message.append("Price: <code>").append(priceRange.format()).append("</code>\n\n");
+        message.append("Min price: <code>").append(priceRange.formatMin()).append("</code>\n");
+        message.append("Max price: <code>").append(priceRange.formatMax()).append("</code>\n\n");
 
         if (moves.isEmpty()) {
             message.append("<code>No Binance Futures coins are above the threshold.</code>");
@@ -298,7 +299,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private void sendMenu(long chatId, String text) {
         String message = text + "\n\n"
                 + "Threshold: " + FundingTracker.formatPercent(getThreshold(chatId)) + "\n"
-                + "Price: " + getPriceRange(chatId).format() + "\n"
+                + "Min price: " + getPriceRange(chatId).formatMin() + "\n"
+                + "Max price: " + getPriceRange(chatId).formatMax() + "\n"
                 + "Poll interval: " + getPollInterval(chatId) + " minutes";
         sendText(chatId, message, menuKeyboard());
     }
@@ -410,6 +412,17 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 return "all";
             }
             return FundingTracker.formatPrice(min) + " - " + FundingTracker.formatPrice(max);
+        }
+
+        String formatMin() {
+            return FundingTracker.formatPrice(min);
+        }
+
+        String formatMax() {
+            if (max == Double.MAX_VALUE) {
+                return "all";
+            }
+            return FundingTracker.formatPrice(max);
         }
     }
 }
