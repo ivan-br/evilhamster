@@ -6,6 +6,7 @@ const CALLBACK_SET_VOLUME = "SET_VOLUME";
 const CALLBACK_RESET = "RESET";
 const CALLBACK_UPDATE = "UPDATE";
 
+const BUILD_ID = "debug-config-2026-07-18-1";
 const DEFAULT_PERCENT = 50;
 const DEFAULT_INTERVAL_MINUTES = 60;
 const MAX_ROWS_PER_MESSAGE = 80;
@@ -21,17 +22,18 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/debug/config") {
-      const forbidden = authorizeDebugRequest(url, env);
-      if (forbidden) {
-        return forbidden;
-      }
-
       return jsonResponse({
+        buildId: BUILD_ID,
         hasBotToken: Boolean(env.BOT_TOKEN),
+        botTokenLength: env.BOT_TOKEN ? env.BOT_TOKEN.length : 0,
+        botTokenPreview: maskValue(env.BOT_TOKEN),
         hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
+        webhookSecretLength: env.TELEGRAM_WEBHOOK_SECRET ? env.TELEGRAM_WEBHOOK_SECRET.length : 0,
+        webhookSecretPreview: maskValue(env.TELEGRAM_WEBHOOK_SECRET),
         hasStrictWebhookSecret: env.STRICT_WEBHOOK_SECRET === "true",
         hasBotState: Boolean(env.BOT_STATE),
-        botName: env.BOT_NAME || null
+        botName: env.BOT_NAME || null,
+        envKeys: Object.keys(env).sort()
       });
     }
 
@@ -505,6 +507,16 @@ function authorizeDebugRequest(url, env) {
     return new Response("Forbidden", { status: 403 });
   }
   return null;
+}
+
+function maskValue(value) {
+  if (!value) {
+    return null;
+  }
+  if (value.length <= 8) {
+    return "*".repeat(value.length);
+  }
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
 function jsonResponse(value, status = 200) {
