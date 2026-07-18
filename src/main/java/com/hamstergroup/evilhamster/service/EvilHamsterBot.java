@@ -250,7 +250,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             double threshold = getThreshold(chatId);
             PriceRange priceRange = getPriceRange(chatId);
             List<FundingTracker.CoinMove> gainers = tracker.findGainers(threshold, priceRange.min(), priceRange.max());
-            sendReport(chatId, "Scheduled Binance Futures movers", threshold, priceRange, gainers);
+            sendReport(chatId, "", threshold, priceRange, gainers);
             System.out.println("Scheduled poll sent to chat " + chatId + " with " + gainers.size() + " movers.");
         } catch (Exception e) {
             e.printStackTrace();
@@ -275,7 +275,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         for (int part = 0; part < totalParts; part++) {
             int from = part * MAX_ROWS_PER_MESSAGE;
             int to = Math.min(from + MAX_ROWS_PER_MESSAGE, moves.size());
-            String partTitle = title + " (" + (part + 1) + "/" + totalParts + ")";
+            String partTitle = title.isBlank() ? "" : title + " (" + (part + 1) + "/" + totalParts + ")";
             InlineKeyboardMarkup keyboard = part == totalParts - 1 ? menuKeyboard() : null;
             sendHtml(chatId, renderReport(partTitle, threshold, priceRange, moves.subList(from, to)), keyboard);
         }
@@ -283,7 +283,9 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
     private String renderReport(String title, double threshold, PriceRange priceRange, List<FundingTracker.CoinMove> moves) {
         StringBuilder message = new StringBuilder();
-        message.append("<b>").append(escape(title)).append("</b>\n");
+        if (!title.isBlank()) {
+            message.append("<b>").append(escape(title)).append("</b>\n");
+        }
         message.append("Threshold: <code>").append(FundingTracker.formatPercent(threshold)).append("</code>\n");
         message.append("Min price: <code>").append(priceRange.formatMin()).append("</code>\n");
         message.append("Max price: <code>").append(priceRange.formatMax()).append("</code>\n\n");
