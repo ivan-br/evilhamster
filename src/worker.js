@@ -20,6 +20,44 @@ export default {
       return new Response("OK", { headers: { "content-type": "text/plain" } });
     }
 
+    if (request.method === "GET" && url.pathname === "/debug/config") {
+      const forbidden = authorizeDebugRequest(url, env);
+      if (forbidden) {
+        return forbidden;
+      }
+
+      return jsonResponse({
+        hasBotToken: Boolean(env.BOT_TOKEN),
+        hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
+        hasBotState: Boolean(env.BOT_STATE),
+        botName: env.BOT_NAME || null
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/debug/binance") {
+      const forbidden = authorizeDebugRequest(url, env);
+      if (forbidden) {
+        return forbidden;
+      }
+
+      try {
+        const state = defaultState();
+        state.percent = 1;
+        const moves = await findGainers(state);
+        return jsonResponse({
+          ok: true,
+          count: moves.length,
+          sample: moves.slice(0, 5)
+        });
+      } catch (error) {
+        return jsonResponse({
+          ok: false,
+          message: error?.message || String(error),
+          stack: error?.stack || null
+        }, 500);
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/webhook") {
       if (env.TELEGRAM_WEBHOOK_SECRET) {
         const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
@@ -452,6 +490,23 @@ function menuKeyboard() {
       [{ text: "Reset", callback_data: CALLBACK_RESET }]
     ]
   };
+}
+
+function authorizeDebugRequest(url, env) {
+  const secret = url.searchParams.get("secret");
+  if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
+    return new Response("Forbidden", { status: 403 });
+  }
+  return null;
+}
+
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value, null, 2), {
+    status,
+    headers: {
+      "content-type": "application/json"
+    }
+  });
 }
 
 async function answerCallback(env, callbackQueryId) {
