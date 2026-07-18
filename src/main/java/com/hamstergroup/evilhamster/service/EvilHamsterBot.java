@@ -10,16 +10,13 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 @Component
 public class EvilHamsterBot extends TelegramLongPollingBot {
@@ -38,7 +35,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private final Map<Long, Double> thresholds = new ConcurrentHashMap<>();
     private final Map<Long, Integer> pollIntervals = new ConcurrentHashMap<>();
     private final Map<Long, ScheduledFuture<?>> pollTasks = new ConcurrentHashMap<>();
-    private final Map<Long, Set<String>> previouslyAboveThreshold = new ConcurrentHashMap<>();
     private final Map<Long, InputMode> inputModes = new ConcurrentHashMap<>();
 
     public EvilHamsterBot(HamsterConfigProperties properties) {
@@ -117,9 +113,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private void startChat(long chatId) {
         thresholds.putIfAbsent(chatId, DEFAULT_THRESHOLD_PERCENT);
         pollIntervals.putIfAbsent(chatId, DEFAULT_POLL_INTERVAL_MINUTES);
-        previouslyAboveThreshold.putIfAbsent(chatId, ConcurrentHashMap.newKeySet());
-        restartPolling(chatId);
         sendMenu(chatId, "Binance Futures scanner is running.");
+        restartPolling(chatId, getPollInterval(chatId));
     }
 
     private void updateThreshold(long chatId, String text) {
@@ -132,8 +127,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             }
 
             thresholds.put(chatId, threshold);
-            previouslyAboveThreshold.put(chatId, ConcurrentHashMap.newKeySet());
             sendMenu(chatId, "Threshold set to " + FundingTracker.formatPercent(threshold) + ".");
+            restartPolling(chatId, 0);
         } catch (NumberFormatException e) {
             sendText(chatId, "Please enter a number from 1 to 100. Example: 90");
             inputModes.put(chatId, InputMode.THRESHOLD);
@@ -150,15 +145,15 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             }
 
             pollIntervals.put(chatId, minutes);
-            restartPolling(chatId);
             sendMenu(chatId, "Poll interval set to " + minutes + " minutes.");
+            restartPolling(chatId, 0);
         } catch (NumberFormatException e) {
             sendText(chatId, "Please enter the poll interval in minutes. Example: 60");
             inputModes.put(chatId, InputMode.INTERVAL);
         }
     }
 
-    private void restartPolling(long chatId) {
+    private void restartPolling(long chatId, long initialDelayMinutes) {
         ScheduledFuture<?> existingTask = pollTasks.remove(chatId);
         if (existingTask != null) {
             existingTask.cancel(true);
@@ -166,8 +161,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
         int intervalMinutes = getPollInterval(chatId);
         ScheduledFuture<?> task = scheduler.scheduleAtFixedRate(
-                () -> sendNewThresholdCrossings(chatId),
-                intervalMinutes,
+                () -> sendScheduledGainers(chatId),
+                Math.max(0, initialDelayMinutes),
                 intervalMinutes,
                 TimeUnit.MINUTES
         );
@@ -184,27 +179,11 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    private void sendNewThresholdCrossings(long chatId) {
+    private void sendScheduledGainers(long chatId) {
         try {
             double threshold = getThreshold(chatId);
             List<FundingTracker.CoinMove> gainers = tracker.findGainers(threshold);
-            Set<String> currentSymbols = gainers.stream()
-                    .map(FundingTracker.CoinMove::symbol)
-                    .collect(Collectors.toCollection(HashSet::new));
-
-            Set<String> previousSymbols = previouslyAboveThreshold.computeIfAbsent(
-                    chatId,
-                    ignored -> ConcurrentHashMap.newKeySet()
-            );
-            List<FundingTracker.CoinMove> newCrossings = gainers.stream()
-                    .filter(move -> !previousSymbols.contains(move.symbol()))
-                    .toList();
-
-            previouslyAboveThreshold.put(chatId, currentSymbols);
-
-            if (!newCrossings.isEmpty()) {
-                sendReport(chatId, "Threshold crossed", threshold, newCrossings);
-            }
+            sendReport(chatId, "Scheduled Binance Futures movers", threshold, gainers);
         } catch (Exception e) {
             e.printStackTrace();
         }
