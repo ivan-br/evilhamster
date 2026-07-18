@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,7 +20,6 @@ import java.util.concurrent.TimeUnit;
 
 public class FundingTracker {
 
-    private static final String BINANCE_FUTURES_BASE_URL = "https://fapi.binance.com";
     private static final String BINANCE_FUTURES_WS_BASE_URL = "wss://fstream.binance.com/market/ws/";
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -63,36 +60,10 @@ public class FundingTracker {
 
     private MarketSnapshot fetchMarketSnapshot() throws Exception {
         try {
-            return new MarketSnapshot(
-                    getJson(BINANCE_FUTURES_BASE_URL + "/fapi/v1/ticker/24hr"),
-                    fetchFundingPercentBySymbolFromRest()
-            );
-        } catch (IOException e) {
-            if (!isRestrictedLocationError(e)) {
-                throw e;
-            }
-            System.out.println("Binance REST is blocked by location. Falling back to Futures WebSocket streams.");
             return fetchMarketSnapshotFromWebSocket();
+        } catch (Exception webSocketError) {
+            throw new IOException("Binance Futures WebSocket market data is unavailable.", webSocketError);
         }
-    }
-
-    private Map<String, Double> fetchFundingPercentBySymbolFromRest() throws Exception {
-        JsonNode premiumIndexes = getJson(BINANCE_FUTURES_BASE_URL + "/fapi/v1/premiumIndex");
-        Map<String, Double> result = new HashMap<>();
-
-        if (!premiumIndexes.isArray()) {
-            return result;
-        }
-
-        for (JsonNode premiumIndex : premiumIndexes) {
-            String symbol = premiumIndex.path("symbol").asText("");
-            double rate = parseDouble(premiumIndex.path("lastFundingRate").asText(null));
-            if (symbol.endsWith("USDT") && !Double.isNaN(rate)) {
-                result.put(symbol, rate * 100.0);
-            }
-        }
-
-        return result;
     }
 
     private MarketSnapshot fetchMarketSnapshotFromWebSocket() throws Exception {
@@ -113,21 +84,6 @@ public class FundingTracker {
         return new MarketSnapshot(tickers, fundingBySymbol);
     }
 
-    private static JsonNode getJson(String url) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                .timeout(Duration.ofSeconds(20))
-                .header("User-Agent", "EvilHamster/2.0")
-                .GET()
-                .build();
-
-        HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() / 100 != 2) {
-            throw new IOException("HTTP " + response.statusCode() + " for " + url + " body=" + response.body());
-        }
-
-        return JSON.readTree(response.body());
-    }
-
     private static JsonNode readWebSocketJson(String url) throws Exception {
         FirstMessageListener listener = new FirstMessageListener();
         WebSocket webSocket = HTTP.newWebSocketBuilder()
@@ -141,11 +97,6 @@ public class FundingTracker {
         } finally {
             webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done");
         }
-    }
-
-    private static boolean isRestrictedLocationError(IOException e) {
-        String message = e.getMessage();
-        return message != null && message.contains("HTTP 451");
     }
 
     private static String firstText(JsonNode node, String firstField, String secondField) {

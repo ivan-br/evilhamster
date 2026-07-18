@@ -30,6 +30,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private static final double DEFAULT_THRESHOLD_PERCENT = 50.0;
     private static final int DEFAULT_POLL_INTERVAL_MINUTES = 60;
     private static final int MAX_ROWS_PER_MESSAGE = 80;
+    private static final String DATA_SOURCE = "Binance Futures WebSocket";
 
     private final HamsterConfigProperties properties;
     private final FundingTracker tracker = new FundingTracker();
@@ -179,7 +180,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             List<FundingTracker.CoinMove> gainers = tracker.findGainers(threshold);
             sendReport(chatId, "Current Binance Futures movers", threshold, gainers);
         } catch (Exception e) {
-            sendText(chatId, "Update failed: " + e.getMessage());
+            sendText(chatId, "Update failed: " + friendlyError(e));
         }
     }
 
@@ -207,6 +208,14 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private String friendlyError(Exception e) {
+        String message = e.getMessage();
+        if (message != null && message.contains("Binance Futures WebSocket market data is unavailable")) {
+            return "Binance Futures WebSocket market data is unavailable.";
+        }
+        return message == null ? e.getClass().getSimpleName() : message;
     }
 
     private void sendReport(long chatId, String title, double threshold, List<FundingTracker.CoinMove> moves) {
@@ -252,7 +261,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private void sendMenu(long chatId, String text) {
         String message = text + "\n\n"
                 + "Threshold: " + FundingTracker.formatPercent(getThreshold(chatId)) + "\n"
-                + "Poll interval: " + getPollInterval(chatId) + " minutes";
+                + "Poll interval: " + getPollInterval(chatId) + " minutes\n"
+                + "Data source: " + DATA_SOURCE;
         sendText(chatId, message, menuKeyboard());
     }
 
