@@ -29,14 +29,22 @@ public class FundingTracker {
     private static final ObjectMapper JSON = new ObjectMapper();
     private volatile CachedSnapshot cachedSnapshot;
 
-    public record CoinMove(String symbol, double price, double fundingPercent, double priceChangePercent) {
+    public record CoinMove(String symbol, double price, double fundingPercent, double priceChangePercent, double volumeMillions) {
     }
 
     public List<CoinMove> findGainers(double thresholdPercent) throws Exception {
-        return findGainers(thresholdPercent, 0.0, Double.MAX_VALUE);
+        return findGainers(thresholdPercent, 0.0, Double.MAX_VALUE, 0.0, Double.MAX_VALUE);
     }
 
     public List<CoinMove> findGainers(double thresholdPercent, double minPrice, double maxPrice) throws Exception {
+        return findGainers(thresholdPercent, minPrice, maxPrice, 0.0, Double.MAX_VALUE);
+    }
+
+    public List<CoinMove> findGainers(double thresholdPercent,
+                                      double minPrice,
+                                      double maxPrice,
+                                      double minVolumeMillions,
+                                      double maxVolumeMillions) throws Exception {
         MarketSnapshot snapshot = fetchMarketSnapshot();
         Map<String, Double> fundingBySymbol = snapshot.fundingPercentBySymbol();
         JsonNode tickers = snapshot.tickers();
@@ -62,8 +70,13 @@ public class FundingTracker {
                 continue;
             }
 
+            double volumeMillions = parseDouble(firstText(ticker, "quoteVolume", "q")) / 1_000_000.0;
+            if (Double.isNaN(volumeMillions) || volumeMillions < minVolumeMillions || volumeMillions > maxVolumeMillions) {
+                continue;
+            }
+
             double fundingPercent = fundingBySymbol.getOrDefault(symbol, Double.NaN);
-            moves.add(new CoinMove(symbol, price, fundingPercent, priceChangePercent));
+            moves.add(new CoinMove(symbol, price, fundingPercent, priceChangePercent, volumeMillions));
         }
 
         moves.sort(Comparator.comparingDouble(CoinMove::priceChangePercent).reversed());
@@ -191,6 +204,13 @@ public class FundingTracker {
             return String.format(Locale.US, "%.4f", value);
         }
         return String.format(Locale.US, "%.8f", value);
+    }
+
+    public static String formatVolumeMillions(double value) {
+        if (Double.isNaN(value)) {
+            return "n/a";
+        }
+        return String.format(Locale.US, "%.2fM", value);
     }
 
     private record MarketSnapshot(JsonNode tickers, Map<String, Double> fundingPercentBySymbol) {
