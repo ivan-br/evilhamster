@@ -24,6 +24,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private static final String CALLBACK_SET_THRESHOLD = "SET_THRESHOLD";
     private static final String CALLBACK_SET_INTERVAL = "SET_INTERVAL";
     private static final String CALLBACK_SET_PRICE = "SET_PRICE";
+    private static final String CALLBACK_RESET = "RESET";
     private static final String CALLBACK_UPDATE = "UPDATE";
     private static final double DEFAULT_THRESHOLD_PERCENT = 50.0;
     private static final int DEFAULT_POLL_INTERVAL_MINUTES = 60;
@@ -117,6 +118,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     pendingMinPrices.remove(chatId);
                     sendText(chatId, "Min");
                 }
+                case CALLBACK_RESET -> resetSettings(chatId);
                 case CALLBACK_UPDATE -> sendCurrentGainers(chatId);
                 default -> sendMenu(chatId, "Choose an action.");
             }
@@ -203,6 +205,16 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             sendText(chatId, "Max");
             inputModes.put(chatId, InputMode.PRICE_MAX);
         }
+    }
+
+    private void resetSettings(long chatId) {
+        thresholds.put(chatId, DEFAULT_THRESHOLD_PERCENT);
+        pollIntervals.put(chatId, DEFAULT_POLL_INTERVAL_MINUTES);
+        priceRanges.put(chatId, PriceRange.all());
+        pendingMinPrices.remove(chatId);
+        inputModes.remove(chatId);
+        sendMenu(chatId, "Settings reset to defaults.");
+        restartPolling(chatId, DEFAULT_POLL_INTERVAL_MINUTES);
     }
 
     private void restartPolling(long chatId, long initialDelayMinutes) {
@@ -322,13 +334,18 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 .text("Update")
                 .callbackData(CALLBACK_UPDATE)
                 .build();
+        InlineKeyboardButton resetButton = InlineKeyboardButton.builder()
+                .text("Reset")
+                .callbackData(CALLBACK_RESET)
+                .build();
 
         InlineKeyboardMarkup keyboard = new InlineKeyboardMarkup();
         keyboard.setKeyboard(List.of(
                 List.of(thresholdButton),
                 List.of(priceButton),
                 List.of(intervalButton),
-                List.of(updateButton)
+                List.of(updateButton),
+                List.of(resetButton)
         ));
         return keyboard;
     }
