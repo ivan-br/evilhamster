@@ -35,6 +35,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private final Map<Long, Double> thresholds = new ConcurrentHashMap<>();
     private final Map<Long, Integer> pollIntervals = new ConcurrentHashMap<>();
     private final Map<Long, PriceRange> priceRanges = new ConcurrentHashMap<>();
+    private final Map<Long, Double> pendingMinPrices = new ConcurrentHashMap<>();
     private final Map<Long, ScheduledFuture<?>> pollTasks = new ConcurrentHashMap<>();
     private final Map<Long, InputMode> inputModes = new ConcurrentHashMap<>();
 
@@ -72,8 +73,12 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 updatePollInterval(chatId, text);
                 return;
             }
-            if (inputMode == InputMode.PRICE) {
-                updatePriceRange(chatId, text);
+            if (inputMode == InputMode.PRICE_MIN) {
+                updateMinPrice(chatId, text);
+                return;
+            }
+            if (inputMode == InputMode.PRICE_MAX) {
+                updateMaxPrice(chatId, text);
                 return;
             }
 
@@ -108,8 +113,9 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     sendText(chatId, "Enter poll interval in minutes. Example: 60");
                 }
                 case CALLBACK_SET_PRICE -> {
-                    inputModes.put(chatId, InputMode.PRICE);
-                    sendText(chatId, "Enter min and max coin price. Example: 0.01 5");
+                    inputModes.put(chatId, InputMode.PRICE_MIN);
+                    pendingMinPrices.remove(chatId);
+                    sendText(chatId, "Min");
                 }
                 case CALLBACK_UPDATE -> sendCurrentGainers(chatId);
                 default -> sendMenu(chatId, "Choose an action.");
@@ -163,15 +169,39 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
-    private void updatePriceRange(long chatId, String text) {
+    private void updateMinPrice(long chatId, String text) {
         try {
-            PriceRange priceRange = parsePriceRange(text);
+            double min = parsePrice(text);
+            pendingMinPrices.put(chatId, min);
+            inputModes.put(chatId, InputMode.PRICE_MAX);
+            sendText(chatId, "Max");
+        } catch (IllegalArgumentException e) {
+            sendText(chatId, "Min");
+            inputModes.put(chatId, InputMode.PRICE_MIN);
+        }
+    }
+
+    private void updateMaxPrice(long chatId, String text) {
+        try {
+            Double min = pendingMinPrices.remove(chatId);
+            if (min == null) {
+                inputModes.put(chatId, InputMode.PRICE_MIN);
+                sendText(chatId, "Min");
+                return;
+            }
+
+            double max = parsePrice(text);
+            if (max < min) {
+                throw new IllegalArgumentException("max is lower than min");
+            }
+
+            PriceRange priceRange = new PriceRange(min, max);
             priceRanges.put(chatId, priceRange);
             sendMenu(chatId, "Price range set to " + priceRange.format() + ".");
             restartPolling(chatId, 0);
         } catch (IllegalArgumentException e) {
-            sendText(chatId, "Please enter min and max price. Example: 0.01 5");
-            inputModes.put(chatId, InputMode.PRICE);
+            sendText(chatId, "Max");
+            inputModes.put(chatId, InputMode.PRICE_MAX);
         }
     }
 
@@ -313,18 +343,12 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         return priceRanges.getOrDefault(chatId, PriceRange.all());
     }
 
-    private PriceRange parsePriceRange(String text) {
-        String[] parts = text.trim().replace("-", " ").replace(";", " ").split("\\s+");
-        if (parts.length != 2) {
-            throw new IllegalArgumentException("bad price range");
+    private double parsePrice(String text) {
+        double price = Double.parseDouble(text.trim().replace(",", "."));
+        if (Double.isNaN(price) || price < 0.0) {
+            throw new IllegalArgumentException("bad price");
         }
-
-        double min = Double.parseDouble(parts[0].replace(",", "."));
-        double max = Double.parseDouble(parts[1].replace(",", "."));
-        if (Double.isNaN(min) || Double.isNaN(max) || min < 0.0 || max < min) {
-            throw new IllegalArgumentException("bad price range");
-        }
-        return new PriceRange(min, max);
+        return price;
     }
 
     private void sendText(long chatId, String text) {
@@ -372,7 +396,8 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private enum InputMode {
         THRESHOLD,
         INTERVAL,
-        PRICE
+        PRICE_MIN,
+        PRICE_MAX
     }
 
     private record PriceRange(double min, double max) {
