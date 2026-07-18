@@ -27,7 +27,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private static final double DEFAULT_THRESHOLD_PERCENT = 50.0;
     private static final int DEFAULT_POLL_INTERVAL_MINUTES = 60;
     private static final int MAX_ROWS_PER_MESSAGE = 80;
-    private static final String DATA_SOURCE = "Binance Futures WebSocket";
 
     private final HamsterConfigProperties properties;
     private final FundingTracker tracker = new FundingTracker();
@@ -160,7 +159,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
 
         int intervalMinutes = getPollInterval(chatId);
-        ScheduledFuture<?> task = scheduler.scheduleAtFixedRate(
+        ScheduledFuture<?> task = scheduler.scheduleWithFixedDelay(
                 () -> sendScheduledGainers(chatId),
                 Math.max(0, initialDelayMinutes),
                 intervalMinutes,
@@ -181,9 +180,11 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
     private void sendScheduledGainers(long chatId) {
         try {
+            System.out.println("Running scheduled poll for chat " + chatId + " every " + getPollInterval(chatId) + " minutes.");
             double threshold = getThreshold(chatId);
             List<FundingTracker.CoinMove> gainers = tracker.findGainers(threshold);
             sendReport(chatId, "Scheduled Binance Futures movers", threshold, gainers);
+            System.out.println("Scheduled poll sent to chat " + chatId + " with " + gainers.size() + " movers.");
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -240,8 +241,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
     private void sendMenu(long chatId, String text) {
         String message = text + "\n\n"
                 + "Threshold: " + FundingTracker.formatPercent(getThreshold(chatId)) + "\n"
-                + "Poll interval: " + getPollInterval(chatId) + " minutes\n"
-                + "Data source: " + DATA_SOURCE;
+                + "Poll interval: " + getPollInterval(chatId) + " minutes";
         sendText(chatId, message, menuKeyboard());
     }
 
