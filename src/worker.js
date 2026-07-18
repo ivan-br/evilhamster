@@ -11,7 +11,7 @@ const DEFAULT_PERCENT = 50;
 const DEFAULT_INTERVAL_MINUTES = 60;
 const MAX_ROWS_PER_MESSAGE = 80;
 const CHAT_PREFIX = "chat:";
-const BINANCE_FUTURES_WS_BASE_URL = "wss://fstream.binance.com/market/ws/";
+const BINANCE_FUTURES_WS_BASE_URL = "https://fstream.binance.com/market/ws/";
 
 export default {
   async fetch(request, env, ctx) {
