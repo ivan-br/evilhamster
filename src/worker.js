@@ -11,7 +11,7 @@ const DEFAULT_PERCENT = 50;
 const DEFAULT_INTERVAL_MINUTES = 60;
 const MAX_ROWS_PER_MESSAGE = 80;
 const CHAT_PREFIX = "chat:";
-const BINANCE_FUTURES_WS_BASE_URL = "https://fstream.binance.com/market/ws/";
+const BINANCE_FUTURES_REST_BASE_URL = "https://www.binance.com";
 
 export default {
   async fetch(request, env, ctx) {
@@ -340,11 +340,13 @@ async function sendDueScheduledReports(env) {
 }
 
 async function findGainers(state) {
-  const tickers = await readWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!ticker@arr`);
-  const markPrices = await readOptionalWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!markPrice@arr`);
+  const [tickers, premiumIndex] = await Promise.all([
+    fetchBinanceJson("/fapi/v1/ticker/24hr"),
+    fetchOptionalBinanceJson("/fapi/v1/premiumIndex")
+  ]);
 
   const fundingBySymbol = new Map();
-  for (const item of Array.isArray(markPrices) ? markPrices : []) {
+  for (const item of Array.isArray(premiumIndex) ? premiumIndex : []) {
     const symbol = item.s || item.symbol || "";
     const funding = parseNumber(item.r ?? item.lastFundingRate) * 100;
     if (symbol.endsWith("USDT") && Number.isFinite(funding)) {
@@ -387,50 +389,29 @@ async function findGainers(state) {
   return moves;
 }
 
-async function readOptionalWebSocketJson(url) {
+async function fetchOptionalBinanceJson(path) {
   try {
-    return await readWebSocketJson(url);
+    return await fetchBinanceJson(path);
   } catch (error) {
-    console.warn(`Optional Binance stream failed: ${error?.message || error}`);
+    console.warn(`Optional Binance request failed: ${error?.message || error}`);
     return [];
   }
 }
 
-async function readWebSocketJson(url) {
+async function fetchBinanceJson(path) {
+  const url = `${BINANCE_FUTURES_REST_BASE_URL}${path}`;
   const response = await fetch(url, {
     headers: {
-      Upgrade: "websocket"
+      accept: "application/json",
+      "user-agent": "Mozilla/5.0 (compatible; EvilHamsterBot/1.0)"
     }
   });
-  const socket = response.webSocket;
-  if (!socket) {
-    throw new Error(`WebSocket handshake failed for ${url} with status ${response.status}`);
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} for ${url}`);
   }
 
-  socket.accept();
-  const message = await new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      try {
-        socket.close(1000, "timeout");
-      } catch (_error) {
-        // Nothing else to do if the socket is already closed.
-      }
-      reject(new Error(`Timed out reading ${url}`));
-    }, 25_000);
-
-    socket.addEventListener("message", (event) => {
-      clearTimeout(timeoutId);
-      socket.close(1000, "done");
-      resolve(event.data);
-    }, { once: true });
-
-    socket.addEventListener("error", () => {
-      clearTimeout(timeoutId);
-      reject(new Error(`WebSocket failed for ${url}`));
-    }, { once: true });
-  });
-
-  return JSON.parse(message);
+  return await response.json();
 }
 
 async function sendReport(env, chatId, state, moves) {
@@ -660,8 +641,8 @@ function formatVolumeOrAll(value) {
 
 function friendlyError(error) {
   const message = error?.message || String(error);
-  if (message.includes("WebSocket failed") || message.includes("Timed out reading") || message.includes("WebSocket handshake failed")) {
-    return "Binance Futures WebSocket market data is unavailable.";
+  if (message.includes("HTTP 403") || message.includes("HTTP 451")) {
+    return "Binance Futures market data is unavailable from Cloudflare.";
   }
   return message;
 }
