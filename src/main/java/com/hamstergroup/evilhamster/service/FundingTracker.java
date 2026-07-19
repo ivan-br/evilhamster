@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.time.Duration;
 import java.time.Instant;
@@ -22,6 +24,10 @@ import java.util.concurrent.TimeUnit;
 public class FundingTracker {
 
     private static final String BINANCE_FUTURES_WS_BASE_URL = "wss://fstream.binance.com/market/ws/";
+    private static final String[] BINANCE_FUNDING_URLS = {
+            "https://fapi.binance.com/fapi/v1/premiumIndex",
+            "https://www.binance.com/fapi/v1/premiumIndex"
+    };
     private static final Duration SNAPSHOT_CACHE_TTL = Duration.ofSeconds(10);
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -113,27 +119,64 @@ public class FundingTracker {
         CompletableFuture<JsonNode> tickersFuture = CompletableFuture.supplyAsync(() ->
                 readWebSocketJsonUnchecked(BINANCE_FUTURES_WS_BASE_URL + "!ticker@arr")
         );
-        CompletableFuture<JsonNode> markPricesFuture = CompletableFuture.supplyAsync(() ->
-                readWebSocketJsonUnchecked(BINANCE_FUTURES_WS_BASE_URL + "!markPrice@arr@1s")
+        CompletableFuture<Map<String, Double>> fundingFuture = CompletableFuture.supplyAsync(() ->
+                fetchFundingPercentBySymbolUnchecked()
         );
 
-        CompletableFuture.allOf(tickersFuture, markPricesFuture).get(30, TimeUnit.SECONDS);
+        JsonNode tickers = tickersFuture.get(30, TimeUnit.SECONDS);
+        Map<String, Double> fundingBySymbol = fundingFuture.get(30, TimeUnit.SECONDS);
 
-        JsonNode tickers = tickersFuture.getNow(JSON.createArrayNode());
-        JsonNode markPrices = markPricesFuture.getNow(JSON.createArrayNode());
+        return new MarketSnapshot(tickers, fundingBySymbol);
+    }
+
+    private static Map<String, Double> fetchFundingPercentBySymbolUnchecked() {
+        try {
+            return fetchFundingPercentBySymbol();
+        } catch (Exception e) {
+            System.out.println("Binance Futures funding data is unavailable: " + e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private static Map<String, Double> fetchFundingPercentBySymbol() throws Exception {
+        Exception lastError = null;
+        for (String url : BINANCE_FUNDING_URLS) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .timeout(Duration.ofSeconds(15))
+                        .header("accept", "application/json")
+                        .header("user-agent", "Mozilla/5.0 (compatible; EvilHamsterBot/1.0)")
+                        .GET()
+                        .build();
+                HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IOException("HTTP " + response.statusCode() + " for " + url);
+                }
+
+                return parseFundingPercentBySymbol(JSON.readTree(response.body()));
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+
+        throw lastError == null ? new IOException("No Binance funding endpoints configured.") : lastError;
+    }
+
+    private static Map<String, Double> parseFundingPercentBySymbol(JsonNode premiumIndex) {
         Map<String, Double> fundingBySymbol = new HashMap<>();
 
-        if (markPrices.isArray()) {
-            for (JsonNode markPrice : markPrices) {
-                String symbol = markPrice.path("s").asText("");
-                double rate = parseDouble(markPrice.path("r").asText(null));
+        if (premiumIndex.isArray()) {
+            for (JsonNode markPrice : premiumIndex) {
+                String symbol = firstText(markPrice, "symbol", "s");
+                double rate = parseDouble(firstText(markPrice, "lastFundingRate", "r"));
                 if (symbol.endsWith("USDT") && !Double.isNaN(rate)) {
                     fundingBySymbol.put(symbol, rate * 100.0);
                 }
             }
         }
 
-        return new MarketSnapshot(tickers, fundingBySymbol);
+        return fundingBySymbol;
     }
 
     private static JsonNode readWebSocketJsonUnchecked(String url) {
