@@ -340,8 +340,10 @@ async function sendDueScheduledReports(env) {
 }
 
 async function findGainers(state) {
-  const tickers = await readWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!ticker@arr`);
-  const markPrices = await readOptionalWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!markPrice@arr`);
+  const [tickers, markPrices] = await Promise.all([
+    readWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!ticker@arr`),
+    readWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!markPrice@arr@1s`)
+  ]);
 
   const fundingBySymbol = new Map();
   for (const item of Array.isArray(markPrices) ? markPrices : []) {
@@ -387,15 +389,6 @@ async function findGainers(state) {
   return moves;
 }
 
-async function readOptionalWebSocketJson(url) {
-  try {
-    return await readWebSocketJson(url);
-  } catch (error) {
-    console.warn(`Optional Binance stream failed: ${error?.message || error}`);
-    return [];
-  }
-}
-
 async function readWebSocketJson(url) {
   const response = await fetch(url, {
     headers: {
@@ -404,7 +397,7 @@ async function readWebSocketJson(url) {
   });
   const socket = response.webSocket;
   if (!socket) {
-    throw new Error(`WebSocket handshake failed for ${url} with status ${response.status}`);
+    throw new Error(`WebSocket handshake failed for ${url}`);
   }
 
   socket.accept();
