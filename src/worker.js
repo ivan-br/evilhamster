@@ -10,7 +10,12 @@ const DEFAULT_PERCENT = 50;
 const DEFAULT_INTERVAL_MINUTES = 60;
 const MAX_ROWS_PER_MESSAGE = 80;
 const CHAT_PREFIX = "chat:";
-const BINANCE_FUTURES_WS_BASE_URL = "wss://fstream.binance.com/market/ws/";
+const BINANCE_BASE_URLS = [
+  "https://fapi.binance.com",
+  "https://fapi1.binance.com",
+  "https://fapi2.binance.com",
+  "https://fapi3.binance.com"
+];
 
 export default {
   async fetch(request, env, ctx) {
@@ -299,15 +304,15 @@ async function sendDueScheduledReports(env) {
 }
 
 async function findGainers(state) {
-  const [tickers, markPrices] = await Promise.all([
-    readWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!ticker@arr`),
-    readWebSocketJson(`${BINANCE_FUTURES_WS_BASE_URL}!markPrice@arr@1s`)
+  const [tickers, premiumIndex] = await Promise.all([
+    fetchBinanceJson("/fapi/v1/ticker/24hr"),
+    fetchBinanceJson("/fapi/v1/premiumIndex")
   ]);
 
   const fundingBySymbol = new Map();
-  for (const item of Array.isArray(markPrices) ? markPrices : []) {
-    const symbol = item.s || item.symbol || "";
-    const funding = parseNumber(item.r ?? item.lastFundingRate) * 100;
+  for (const item of Array.isArray(premiumIndex) ? premiumIndex : []) {
+    const symbol = item.symbol || "";
+    const funding = parseNumber(item.lastFundingRate) * 100;
     if (symbol.endsWith("USDT") && Number.isFinite(funding)) {
       fundingBySymbol.set(symbol, funding);
     }
@@ -315,22 +320,22 @@ async function findGainers(state) {
 
   const moves = [];
   for (const ticker of Array.isArray(tickers) ? tickers : []) {
-    const symbol = ticker.s || ticker.symbol || "";
+    const symbol = ticker.symbol || "";
     if (!symbol.endsWith("USDT")) {
       continue;
     }
 
-    const percent = parseNumber(ticker.P ?? ticker.priceChangePercent);
+    const percent = parseNumber(ticker.priceChangePercent);
     if (!Number.isFinite(percent) || percent < state.percent) {
       continue;
     }
 
-    const price = parseNumber(ticker.c ?? ticker.lastPrice);
+    const price = parseNumber(ticker.lastPrice);
     if (!Number.isFinite(price) || price < state.minPrice || price > state.maxPrice) {
       continue;
     }
 
-    const volumeMillions = parseNumber(ticker.q ?? ticker.quoteVolume) / 1_000_000;
+    const volumeMillions = parseNumber(ticker.quoteVolume) / 1_000_000;
     if (!Number.isFinite(volumeMillions) || volumeMillions < state.minVolumeMillions || volumeMillions > state.maxVolumeMillions) {
       continue;
     }
@@ -348,31 +353,31 @@ async function findGainers(state) {
   return moves;
 }
 
-async function readWebSocketJson(url) {
-  const socket = new WebSocket(url);
-  const message = await new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      try {
-        socket.close(1000, "timeout");
-      } catch (_error) {
-        // Nothing else to do if the socket is already closed.
+async function fetchBinanceJson(path) {
+  let lastError;
+
+  for (const baseUrl of BINANCE_BASE_URLS) {
+    const url = `${baseUrl}${path}`;
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "accept": "application/json",
+          "user-agent": "evilhamster-cloudflare-worker/1.0"
+        }
+      });
+
+      if (!response.ok) {
+        lastError = new Error(`HTTP ${response.status} for ${url}`);
+        continue;
       }
-      reject(new Error(`Timed out reading ${url}`));
-    }, 25_000);
 
-    socket.addEventListener("message", (event) => {
-      clearTimeout(timeoutId);
-      socket.close(1000, "done");
-      resolve(event.data);
-    }, { once: true });
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+    }
+  }
 
-    socket.addEventListener("error", () => {
-      clearTimeout(timeoutId);
-      reject(new Error(`WebSocket failed for ${url}`));
-    }, { once: true });
-  });
-
-  return JSON.parse(message);
+  throw lastError || new Error(`Binance request failed for ${path}`);
 }
 
 async function sendReport(env, chatId, state, moves) {
@@ -569,8 +574,8 @@ function formatVolumeOrAll(value) {
 
 function friendlyError(error) {
   const message = error?.message || String(error);
-  if (message.includes("WebSocket failed") || message.includes("Timed out reading")) {
-    return "Binance Futures WebSocket market data is unavailable.";
+  if (message.includes("HTTP 451")) {
+    return "Binance Futures API is unavailable from this Cloudflare region.";
   }
   return message;
 }
