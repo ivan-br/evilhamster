@@ -29,7 +29,6 @@ export default {
       return jsonResponse({
         hasBotToken: Boolean(env.BOT_TOKEN),
         hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
-        hasStrictWebhookSecret: env.STRICT_WEBHOOK_SECRET === "true",
         hasBotState: Boolean(env.BOT_STATE),
         botName: env.BOT_NAME || null
       });
@@ -60,7 +59,7 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/webhook") {
-      if (env.STRICT_WEBHOOK_SECRET === "true" && env.TELEGRAM_WEBHOOK_SECRET) {
+      if (env.TELEGRAM_WEBHOOK_SECRET) {
         const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
         if (secret !== env.TELEGRAM_WEBHOOK_SECRET) {
           return new Response("Forbidden", { status: 403 });
@@ -495,13 +494,7 @@ function menuKeyboard() {
 
 function authorizeDebugRequest(url, env) {
   const secret = url.searchParams.get("secret");
-  const allowedSecrets = [
-    env.DEBUG_SECRET,
-    env.TELEGRAM_WEBHOOK_SECRET,
-    env.BOT_TOKEN
-  ].filter(Boolean);
-
-  if (!secret || !allowedSecrets.includes(secret)) {
+  if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
     return new Response("Forbidden", { status: 403 });
   }
   return null;
