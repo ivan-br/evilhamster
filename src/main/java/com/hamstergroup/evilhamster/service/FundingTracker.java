@@ -34,6 +34,7 @@ public class FundingTracker {
             .build();
     private static final ObjectMapper JSON = new ObjectMapper();
     private volatile CachedSnapshot cachedSnapshot;
+    private volatile Map<String, Double> lastGoodFundingBySymbol = Map.of();
 
     public record CoinMove(String symbol, double price, double fundingPercent, double priceChangePercent, double volumeMillions) {
     }
@@ -125,6 +126,11 @@ public class FundingTracker {
 
         JsonNode tickers = tickersFuture.get(30, TimeUnit.SECONDS);
         Map<String, Double> fundingBySymbol = fundingFuture.get(30, TimeUnit.SECONDS);
+        if (!fundingBySymbol.isEmpty()) {
+            lastGoodFundingBySymbol = Map.copyOf(fundingBySymbol);
+        } else if (!lastGoodFundingBySymbol.isEmpty()) {
+            fundingBySymbol = lastGoodFundingBySymbol;
+        }
 
         return new MarketSnapshot(tickers, fundingBySymbol);
     }
@@ -140,23 +146,33 @@ public class FundingTracker {
 
     private static Map<String, Double> fetchFundingPercentBySymbol() throws Exception {
         Exception lastError = null;
-        for (String url : BINANCE_FUNDING_URLS) {
-            try {
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .timeout(Duration.ofSeconds(15))
-                        .header("accept", "application/json")
-                        .header("user-agent", "Mozilla/5.0 (compatible; EvilHamsterBot/1.0)")
-                        .GET()
-                        .build();
-                HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    throw new IOException("HTTP " + response.statusCode() + " for " + url);
-                }
+        for (int attempt = 0; attempt < 2; attempt++) {
+            for (String url : BINANCE_FUNDING_URLS) {
+                try {
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create(url))
+                            .timeout(Duration.ofSeconds(15))
+                            .header("accept", "application/json")
+                            .header("user-agent", "Mozilla/5.0 (compatible; EvilHamsterBot/1.0)")
+                            .GET()
+                            .build();
+                    HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+                    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                        throw new IOException("HTTP " + response.statusCode() + " for " + url);
+                    }
 
-                return parseFundingPercentBySymbol(JSON.readTree(response.body()));
-            } catch (Exception e) {
-                lastError = e;
+                    Map<String, Double> fundingBySymbol = parseFundingPercentBySymbol(JSON.readTree(response.body()));
+                    if (!fundingBySymbol.isEmpty()) {
+                        return fundingBySymbol;
+                    }
+                    throw new IOException("No funding rows in " + url);
+                } catch (Exception e) {
+                    lastError = e;
+                }
+            }
+
+            if (attempt == 0) {
+                Thread.sleep(500);
             }
         }
 
@@ -177,12 +193,13 @@ public class FundingTracker {
     private static List<CoinMove> fillMissingFunding(List<CoinMove> moves) {
         List<CoinMove> filledMoves = new ArrayList<>(moves.size());
         for (CoinMove move : moves) {
-            if (!Double.isNaN(move.fundingPercent())) {
+            double fundingPercent = move.fundingPercent();
+            if (!Double.isNaN(fundingPercent)) {
                 filledMoves.add(move);
                 continue;
             }
 
-            double fundingPercent = fetchFundingPercentForSymbolUnchecked(move.symbol());
+            fundingPercent = fetchFundingPercentForSymbolUnchecked(move.symbol());
             filledMoves.add(new CoinMove(
                     move.symbol(),
                     move.price(),
