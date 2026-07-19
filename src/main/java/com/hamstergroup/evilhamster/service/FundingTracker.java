@@ -86,7 +86,7 @@ public class FundingTracker {
         }
 
         moves.sort(Comparator.comparingDouble(CoinMove::priceChangePercent).reversed());
-        return moves;
+        return fillMissingFunding(moves);
     }
 
     private MarketSnapshot fetchMarketSnapshot() throws Exception {
@@ -160,6 +160,74 @@ public class FundingTracker {
             }
         }
 
+        try {
+            return fetchFundingPercentBySymbolFromWebSocket();
+        } catch (Exception e) {
+            if (lastError != null) {
+                e.addSuppressed(lastError);
+            }
+            throw e;
+        }
+    }
+
+    private static Map<String, Double> fetchFundingPercentBySymbolFromWebSocket() throws Exception {
+        return parseFundingPercentBySymbol(readWebSocketJson(BINANCE_FUTURES_WS_BASE_URL + "!markPrice@arr"));
+    }
+
+    private static List<CoinMove> fillMissingFunding(List<CoinMove> moves) {
+        List<CoinMove> filledMoves = new ArrayList<>(moves.size());
+        for (CoinMove move : moves) {
+            if (!Double.isNaN(move.fundingPercent())) {
+                filledMoves.add(move);
+                continue;
+            }
+
+            double fundingPercent = fetchFundingPercentForSymbolUnchecked(move.symbol());
+            filledMoves.add(new CoinMove(
+                    move.symbol(),
+                    move.price(),
+                    fundingPercent,
+                    move.priceChangePercent(),
+                    move.volumeMillions()
+            ));
+        }
+        return filledMoves;
+    }
+
+    private static double fetchFundingPercentForSymbolUnchecked(String symbol) {
+        try {
+            return fetchFundingPercentForSymbol(symbol);
+        } catch (Exception e) {
+            System.out.println("Binance Futures funding data is unavailable for " + symbol + ": " + e.getMessage());
+            return Double.NaN;
+        }
+    }
+
+    private static double fetchFundingPercentForSymbol(String symbol) throws Exception {
+        Exception lastError = null;
+        for (String url : BINANCE_FUNDING_URLS) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url + "?symbol=" + symbol))
+                        .timeout(Duration.ofSeconds(10))
+                        .header("accept", "application/json")
+                        .header("user-agent", "Mozilla/5.0 (compatible; EvilHamsterBot/1.0)")
+                        .GET()
+                        .build();
+                HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IOException("HTTP " + response.statusCode() + " for " + url);
+                }
+
+                Double fundingPercent = parseFundingPercent(JSON.readTree(response.body()));
+                if (fundingPercent != null) {
+                    return fundingPercent;
+                }
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+
         throw lastError == null ? new IOException("No Binance funding endpoints configured.") : lastError;
     }
 
@@ -174,9 +242,20 @@ public class FundingTracker {
                     fundingBySymbol.put(symbol, rate * 100.0);
                 }
             }
+        } else if (premiumIndex.isObject()) {
+            String symbol = firstText(premiumIndex, "symbol", "s");
+            Double fundingPercent = parseFundingPercent(premiumIndex);
+            if (symbol.endsWith("USDT") && fundingPercent != null) {
+                fundingBySymbol.put(symbol, fundingPercent);
+            }
         }
 
         return fundingBySymbol;
+    }
+
+    private static Double parseFundingPercent(JsonNode node) {
+        double rate = parseDouble(firstText(node, "lastFundingRate", "r"));
+        return Double.isNaN(rate) ? null : rate * 100.0;
     }
 
     private static JsonNode readWebSocketJsonUnchecked(String url) {
