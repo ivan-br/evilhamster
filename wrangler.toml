@@ -5,5 +5,9 @@ compatibility_date = "2026-07-18"
 [vars]
 BOT_NAME = "altcoins_trade_bot"
 
+[[kv_namespaces]]
+binding = "BOT_STATE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
 [triggers]
 crons = ["* * * * *"]

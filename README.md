@@ -4,14 +4,19 @@ Telegram webhook bot for Binance Futures movers.
 
 ## Cloudflare setup
 
-Create a KV namespace in Cloudflare, then add it to the Worker bindings:
+Create a KV namespace:
 
-```text
-Variable name: BOT_STATE
-Type: KV namespace
+```bash
+npx wrangler kv namespace create BOT_STATE
 ```
 
-Do this in the Cloudflare dashboard under the Worker project settings. The binding must be named exactly `BOT_STATE`.
+Copy the returned namespace id into `wrangler.toml`:
+
+```toml
+[[kv_namespaces]]
+binding = "BOT_STATE"
+id = "your_namespace_id"
+```
 
 Add these Cloudflare Worker variables/secrets:
 
