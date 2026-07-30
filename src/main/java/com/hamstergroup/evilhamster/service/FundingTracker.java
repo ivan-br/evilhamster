@@ -51,9 +51,9 @@ public class FundingTracker {
                            boolean valid) {
     }
 
-    public record ValidationConfig(boolean enabled, int minCompletedWeeks, double minAtlGrowthPercent, double maxAtlGrowthPercent) {
+    public record ValidationConfig(boolean enabled, double athPercent, int minLength) {
         public static ValidationConfig defaults() {
-            return new ValidationConfig(false, 8, 100.0, Double.MAX_VALUE);
+            return new ValidationConfig(false, 50.0, 8);
         }
     }
 
@@ -117,7 +117,7 @@ public class FundingTracker {
             }
 
             double fundingPercent = fundingBySymbol.getOrDefault(symbol, Double.NaN);
-            boolean valid = !validationConfig.enabled() || isValidWeeklyMove(symbol, validationConfig);
+            boolean valid = !validationConfig.enabled() || isValidWeeklyMove(symbol, price, validationConfig);
             if (validationConfig.enabled() && !valid) {
                 continue;
             }
@@ -129,9 +129,9 @@ public class FundingTracker {
         return fillMissingFunding(moves);
     }
 
-    private boolean isValidWeeklyMove(String symbol, ValidationConfig validationConfig) {
+    private boolean isValidWeeklyMove(String symbol, double currentPrice, ValidationConfig validationConfig) {
         try {
-            return readWeeklyValidation(symbol).valid(validationConfig);
+            return readWeeklyValidation(symbol).valid(currentPrice, validationConfig);
         } catch (Exception e) {
             System.out.println("Binance Futures weekly validation data is unavailable for " + symbol + ": " + e.getMessage());
             return false;
@@ -163,21 +163,19 @@ public class FundingTracker {
         }
 
         int completedWeeks = candles.size() - 1;
-        double atl = Double.MAX_VALUE;
+        double ath = 0.0;
         for (int i = 0; i < completedWeeks; i++) {
-            double low = parseDouble(candles.get(i).path(3).asText(""));
-            if (!Double.isNaN(low) && low > 0.0 && low < atl) {
-                atl = low;
+            double high = parseDouble(candles.get(i).path(2).asText(""));
+            if (!Double.isNaN(high) && high > ath) {
+                ath = high;
             }
         }
 
-        double currentWeekHigh = parseDouble(candles.get(candles.size() - 1).path(2).asText(""));
-        if (atl == Double.MAX_VALUE || Double.isNaN(currentWeekHigh)) {
+        if (ath <= 0.0) {
             return new WeeklyValidation(completedWeeks, Double.NaN);
         }
 
-        double atlGrowthPercent = ((currentWeekHigh - atl) / atl) * 100.0;
-        return new WeeklyValidation(completedWeeks, atlGrowthPercent);
+        return new WeeklyValidation(completedWeeks, ath);
     }
 
     private static JsonNode fetchWeeklyCandles(String symbol) throws Exception {
@@ -476,12 +474,13 @@ public class FundingTracker {
         }
     }
 
-    private record WeeklyValidation(int completedWeeks, double atlGrowthPercent) {
-        boolean valid(ValidationConfig config) {
-            return completedWeeks >= config.minCompletedWeeks()
-                    && !Double.isNaN(atlGrowthPercent)
-                    && atlGrowthPercent >= config.minAtlGrowthPercent()
-                    && atlGrowthPercent <= config.maxAtlGrowthPercent();
+    private record WeeklyValidation(int completedWeeks, double ath) {
+        boolean valid(double currentPrice, ValidationConfig config) {
+            return completedWeeks >= config.minLength()
+                    && !Double.isNaN(ath)
+                    && ath > 0.0
+                    && !Double.isNaN(currentPrice)
+                    && (currentPrice / ath) * 100.0 >= config.athPercent();
         }
     }
 
