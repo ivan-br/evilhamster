@@ -347,6 +347,11 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                             VolumeRange volumeRange,
                             int intervalMinutes,
                             List<FundingTracker.CoinMove> moves) {
+        if (moves.isEmpty()) {
+            System.out.println("No movers found for chat " + chatId + "; skipping empty report.");
+            return;
+        }
+
         if (moves.size() <= MAX_ROWS_PER_MESSAGE) {
             sendHtml(chatId, renderReport(title, threshold, priceRange, volumeRange, intervalMinutes, moves), menuKeyboard());
             return;
@@ -378,11 +383,6 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         message.append("Min volume: <code>").append(volumeRange.formatMin()).append("</code>\n");
         message.append("Max volume: <code>").append(volumeRange.formatMax()).append("</code>\n");
         message.append("Interval: <code>").append(intervalMinutes).append(" minutes</code>\n\n");
-
-        if (moves.isEmpty()) {
-            message.append("<code>No Binance Futures coins are above the percent.</code>");
-            return message.toString();
-        }
 
         message.append("<pre><code>");
         message.append(String.format("%-12s | %-12s | %-9s | %-8s | %-10s%n", "Coin", "Price", "Funding", "Percent", "Volume"));
