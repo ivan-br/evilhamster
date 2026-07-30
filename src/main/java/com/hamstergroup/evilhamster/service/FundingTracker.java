@@ -51,9 +51,9 @@ public class FundingTracker {
                            boolean valid) {
     }
 
-    public record ValidationConfig(int minCompletedWeeks, double minAtlGrowthPercent, double maxAtlGrowthPercent) {
+    public record ValidationConfig(boolean enabled, int minCompletedWeeks, double minAtlGrowthPercent, double maxAtlGrowthPercent) {
         public static ValidationConfig defaults() {
-            return new ValidationConfig(8, 100.0, Double.MAX_VALUE);
+            return new ValidationConfig(false, 8, 100.0, Double.MAX_VALUE);
         }
     }
 
@@ -117,7 +117,11 @@ public class FundingTracker {
             }
 
             double fundingPercent = fundingBySymbol.getOrDefault(symbol, Double.NaN);
-            boolean valid = isValidWeeklyMove(symbol, validationConfig);
+            boolean valid = !validationConfig.enabled() || isValidWeeklyMove(symbol, validationConfig);
+            if (validationConfig.enabled() && !valid) {
+                continue;
+            }
+
             moves.add(new CoinMove(symbol, price, fundingPercent, priceChangePercent, volumeMillions, valid));
         }
 

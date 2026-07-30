@@ -100,6 +100,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 updateMaxVolume(chatId, text);
                 return;
             }
+            if (inputMode == InputMode.VALIDATION_ENABLED) {
+                updateValidationEnabled(chatId, text);
+                return;
+            }
             if (inputMode == InputMode.VALIDATION_MIN_ATL_PERCENT) {
                 updateMinAtlPercent(chatId, text);
                 return;
@@ -154,10 +158,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     sendText(chatId, "Min (M)");
                 }
                 case CALLBACK_SET_VALIDATION -> {
-                    inputModes.put(chatId, InputMode.VALIDATION_MIN_ATL_PERCENT);
+                    inputModes.put(chatId, InputMode.VALIDATION_ENABLED);
                     pendingMinAtlPercents.remove(chatId);
                     pendingMaxAtlPercents.remove(chatId);
-                    sendText(chatId, "Min ATL percent");
+                    sendText(chatId, "Enable isValid? true/false");
                 }
                 case CALLBACK_RESET -> resetSettings(chatId);
                 case CALLBACK_UPDATE -> sendCurrentGainers(chatId);
@@ -288,6 +292,32 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         }
     }
 
+    private void updateValidationEnabled(long chatId, String text) {
+        try {
+            boolean enabled = parseBoolean(text);
+            if (!enabled) {
+                FundingTracker.ValidationConfig current = getValidationConfig(chatId);
+                validationConfigs.put(chatId, new FundingTracker.ValidationConfig(
+                        false,
+                        current.minCompletedWeeks(),
+                        current.minAtlGrowthPercent(),
+                        current.maxAtlGrowthPercent()
+                ));
+                pendingMinAtlPercents.remove(chatId);
+                pendingMaxAtlPercents.remove(chatId);
+                sendMenu(chatId, "isValid disabled.");
+                restartPolling(chatId, 0);
+                return;
+            }
+
+            inputModes.put(chatId, InputMode.VALIDATION_MIN_ATL_PERCENT);
+            sendText(chatId, "Min ATL percent");
+        } catch (IllegalArgumentException e) {
+            sendText(chatId, "Enable isValid? true/false");
+            inputModes.put(chatId, InputMode.VALIDATION_ENABLED);
+        }
+    }
+
     private void updateMinAtlPercent(long chatId, String text) {
         try {
             double min = parsePercent(text);
@@ -339,6 +369,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             }
 
             FundingTracker.ValidationConfig validationConfig = new FundingTracker.ValidationConfig(
+                    true,
                     minWeeks,
                     minAtlPercent,
                     maxAtlPercent
@@ -483,23 +514,41 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         message.append("Max price: <code>").append(priceRange.formatMax()).append("</code>\n");
         message.append("Min volume: <code>").append(volumeRange.formatMin()).append("</code>\n");
         message.append("Max volume: <code>").append(volumeRange.formatMax()).append("</code>\n");
-        message.append("Min ATL: <code>").append(FundingTracker.formatPercent(validationConfig.minAtlGrowthPercent())).append("</code>\n");
-        message.append("Max ATL: <code>").append(formatValidationMaxPercent(validationConfig.maxAtlGrowthPercent())).append("</code>\n");
-        message.append("Min weeks: <code>").append(validationConfig.minCompletedWeeks()).append("</code>\n");
+        message.append("isValid: <code>").append(validationConfig.enabled()).append("</code>\n");
+        if (validationConfig.enabled()) {
+            message.append("Min ATL: <code>").append(FundingTracker.formatPercent(validationConfig.minAtlGrowthPercent())).append("</code>\n");
+            message.append("Max ATL: <code>").append(formatValidationMaxPercent(validationConfig.maxAtlGrowthPercent())).append("</code>\n");
+            message.append("Min weeks: <code>").append(validationConfig.minCompletedWeeks()).append("</code>\n");
+        }
         message.append("Interval: <code>").append(intervalMinutes).append(" minutes</code>\n\n");
 
         message.append("<pre><code>");
-        message.append(String.format("%-12s | %-12s | %-9s | %-8s | %-10s | %-7s%n", "Coin", "Price", "Funding", "Percent", "Volume", "isValid"));
+        if (validationConfig.enabled()) {
+            message.append(String.format("%-12s | %-12s | %-9s | %-8s | %-10s | %-7s%n", "Coin", "Price", "Funding", "Percent", "Volume", "isValid"));
+        } else {
+            message.append(String.format("%-12s | %-12s | %-9s | %-8s | %-10s%n", "Coin", "Price", "Funding", "Percent", "Volume"));
+        }
         for (FundingTracker.CoinMove move : moves) {
-            message.append(String.format(
-                    "%-12s | %-12s | %-9s | %-8s | %-10s | %-7s%n",
-                    move.symbol(),
-                    FundingTracker.formatPrice(move.price()),
-                    FundingTracker.formatFunding(move.fundingPercent()),
-                    FundingTracker.formatPercent(move.priceChangePercent()),
-                    FundingTracker.formatVolumeMillions(move.volumeMillions()),
-                    move.valid()
-            ));
+            if (validationConfig.enabled()) {
+                message.append(String.format(
+                        "%-12s | %-12s | %-9s | %-8s | %-10s | %-7s%n",
+                        move.symbol(),
+                        FundingTracker.formatPrice(move.price()),
+                        FundingTracker.formatFunding(move.fundingPercent()),
+                        FundingTracker.formatPercent(move.priceChangePercent()),
+                        FundingTracker.formatVolumeMillions(move.volumeMillions()),
+                        move.valid()
+                ));
+            } else {
+                message.append(String.format(
+                        "%-12s | %-12s | %-9s | %-8s | %-10s%n",
+                        move.symbol(),
+                        FundingTracker.formatPrice(move.price()),
+                        FundingTracker.formatFunding(move.fundingPercent()),
+                        FundingTracker.formatPercent(move.priceChangePercent()),
+                        FundingTracker.formatVolumeMillions(move.volumeMillions())
+                ));
+            }
         }
         message.append("</code></pre>");
         return message.toString();
@@ -513,9 +562,12 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                 + "Max price: " + getPriceRange(chatId).formatMax() + "\n"
                 + "Min volume: " + getVolumeRange(chatId).formatMin() + "\n"
                 + "Max volume: " + getVolumeRange(chatId).formatMax() + "\n"
-                + "Min ATL: " + FundingTracker.formatPercent(validationConfig.minAtlGrowthPercent()) + "\n"
+                + "isValid: " + validationConfig.enabled() + "\n"
+                + (validationConfig.enabled()
+                ? "Min ATL: " + FundingTracker.formatPercent(validationConfig.minAtlGrowthPercent()) + "\n"
                 + "Max ATL: " + formatValidationMaxPercent(validationConfig.maxAtlGrowthPercent()) + "\n"
                 + "Min weeks: " + validationConfig.minCompletedWeeks() + "\n"
+                : "")
                 + "Interval: " + getPollInterval(chatId) + " minutes";
         sendText(chatId, message, menuKeyboard());
     }
@@ -585,6 +637,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
 
     private FundingTracker.ValidationConfig defaultValidationConfig() {
         return new FundingTracker.ValidationConfig(
+                false,
                 DEFAULT_VALIDATION_MIN_COMPLETED_WEEKS,
                 DEFAULT_VALIDATION_MIN_ATL_PERCENT,
                 DEFAULT_VALIDATION_MAX_ATL_PERCENT
@@ -605,6 +658,17 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
             throw new IllegalArgumentException("bad volume");
         }
         return volumeMillions;
+    }
+
+    private boolean parseBoolean(String text) {
+        String normalized = text.trim().toLowerCase();
+        if (normalized.equals("true") || normalized.equals("yes") || normalized.equals("on") || normalized.equals("1")) {
+            return true;
+        }
+        if (normalized.equals("false") || normalized.equals("no") || normalized.equals("off") || normalized.equals("0")) {
+            return false;
+        }
+        throw new IllegalArgumentException("bad boolean");
     }
 
     private double parsePercent(String text) {
@@ -678,6 +742,7 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
         PRICE_MAX,
         VOLUME_MIN,
         VOLUME_MAX,
+        VALIDATION_ENABLED,
         VALIDATION_MIN_ATL_PERCENT,
         VALIDATION_MAX_ATL_PERCENT,
         VALIDATION_MIN_WEEKS
