@@ -321,6 +321,10 @@ public class EvilHamsterBot extends TelegramLongPollingBot {
                     volumeRange.min(),
                     volumeRange.max()
             );
+            if (gainers.isEmpty()) {
+                System.out.println("Scheduled poll found no movers for chat " + chatId + ".");
+                return;
+            }
             sendReport(chatId, "", threshold, priceRange, volumeRange, getPollInterval(chatId), gainers);
             System.out.println("Scheduled poll sent to chat " + chatId + " with " + gainers.size() + " movers.");
         } catch (Exception e) {
