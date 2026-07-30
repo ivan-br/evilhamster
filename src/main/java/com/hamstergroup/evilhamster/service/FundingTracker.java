@@ -19,6 +19,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public class FundingTracker {
@@ -28,23 +29,40 @@ public class FundingTracker {
             "https://fapi.binance.com/fapi/v1/premiumIndex",
             "https://www.binance.com/fapi/v1/premiumIndex"
     };
+    private static final String[] BINANCE_KLINES_URLS = {
+            "https://fapi.binance.com/fapi/v1/klines",
+            "https://www.binance.com/fapi/v1/klines"
+    };
     private static final Duration SNAPSHOT_CACHE_TTL = Duration.ofSeconds(10);
+    private static final Duration WEEKLY_VALIDATION_CACHE_TTL = Duration.ofMinutes(10);
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
     private static final ObjectMapper JSON = new ObjectMapper();
     private volatile CachedSnapshot cachedSnapshot;
     private volatile Map<String, Double> lastGoodFundingBySymbol = Map.of();
+    private final Map<String, CachedWeeklyValidation> weeklyValidationCache = new ConcurrentHashMap<>();
 
-    public record CoinMove(String symbol, double price, double fundingPercent, double priceChangePercent, double volumeMillions) {
+    public record CoinMove(String symbol,
+                           double price,
+                           double fundingPercent,
+                           double priceChangePercent,
+                           double volumeMillions,
+                           boolean valid) {
+    }
+
+    public record ValidationConfig(int minCompletedWeeks, double minAtlGrowthPercent, double maxAtlGrowthPercent) {
+        public static ValidationConfig defaults() {
+            return new ValidationConfig(8, 100.0, Double.MAX_VALUE);
+        }
     }
 
     public List<CoinMove> findGainers(double thresholdPercent) throws Exception {
-        return findGainers(thresholdPercent, 0.0, Double.MAX_VALUE, 0.0, Double.MAX_VALUE);
+        return findGainers(thresholdPercent, 0.0, Double.MAX_VALUE, 0.0, Double.MAX_VALUE, ValidationConfig.defaults());
     }
 
     public List<CoinMove> findGainers(double thresholdPercent, double minPrice, double maxPrice) throws Exception {
-        return findGainers(thresholdPercent, minPrice, maxPrice, 0.0, Double.MAX_VALUE);
+        return findGainers(thresholdPercent, minPrice, maxPrice, 0.0, Double.MAX_VALUE, ValidationConfig.defaults());
     }
 
     public List<CoinMove> findGainers(double thresholdPercent,
@@ -52,6 +70,22 @@ public class FundingTracker {
                                       double maxPrice,
                                       double minVolumeMillions,
                                       double maxVolumeMillions) throws Exception {
+        return findGainers(
+                thresholdPercent,
+                minPrice,
+                maxPrice,
+                minVolumeMillions,
+                maxVolumeMillions,
+                ValidationConfig.defaults()
+        );
+    }
+
+    public List<CoinMove> findGainers(double thresholdPercent,
+                                      double minPrice,
+                                      double maxPrice,
+                                      double minVolumeMillions,
+                                      double maxVolumeMillions,
+                                      ValidationConfig validationConfig) throws Exception {
         MarketSnapshot snapshot = fetchMarketSnapshot();
         Map<String, Double> fundingBySymbol = snapshot.fundingPercentBySymbol();
         JsonNode tickers = snapshot.tickers();
@@ -83,11 +117,87 @@ public class FundingTracker {
             }
 
             double fundingPercent = fundingBySymbol.getOrDefault(symbol, Double.NaN);
-            moves.add(new CoinMove(symbol, price, fundingPercent, priceChangePercent, volumeMillions));
+            boolean valid = isValidWeeklyMove(symbol, validationConfig);
+            moves.add(new CoinMove(symbol, price, fundingPercent, priceChangePercent, volumeMillions, valid));
         }
 
         moves.sort(Comparator.comparingDouble(CoinMove::priceChangePercent).reversed());
         return fillMissingFunding(moves);
+    }
+
+    private boolean isValidWeeklyMove(String symbol, ValidationConfig validationConfig) {
+        try {
+            return readWeeklyValidation(symbol).valid(validationConfig);
+        } catch (Exception e) {
+            System.out.println("Binance Futures weekly validation data is unavailable for " + symbol + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    private WeeklyValidation readWeeklyValidation(String symbol) throws Exception {
+        CachedWeeklyValidation cached = weeklyValidationCache.get(symbol);
+        if (cached != null && cached.isFresh()) {
+            return cached.validation();
+        }
+
+        synchronized (weeklyValidationCache) {
+            cached = weeklyValidationCache.get(symbol);
+            if (cached != null && cached.isFresh()) {
+                return cached.validation();
+            }
+
+            WeeklyValidation validation = fetchWeeklyValidation(symbol);
+            weeklyValidationCache.put(symbol, new CachedWeeklyValidation(validation, Instant.now()));
+            return validation;
+        }
+    }
+
+    private static WeeklyValidation fetchWeeklyValidation(String symbol) throws Exception {
+        JsonNode candles = fetchWeeklyCandles(symbol);
+        if (!candles.isArray() || candles.size() < 2) {
+            return new WeeklyValidation(0, Double.NaN);
+        }
+
+        int completedWeeks = candles.size() - 1;
+        double atl = Double.MAX_VALUE;
+        for (int i = 0; i < completedWeeks; i++) {
+            double low = parseDouble(candles.get(i).path(3).asText(""));
+            if (!Double.isNaN(low) && low > 0.0 && low < atl) {
+                atl = low;
+            }
+        }
+
+        double currentWeekHigh = parseDouble(candles.get(candles.size() - 1).path(2).asText(""));
+        if (atl == Double.MAX_VALUE || Double.isNaN(currentWeekHigh)) {
+            return new WeeklyValidation(completedWeeks, Double.NaN);
+        }
+
+        double atlGrowthPercent = ((currentWeekHigh - atl) / atl) * 100.0;
+        return new WeeklyValidation(completedWeeks, atlGrowthPercent);
+    }
+
+    private static JsonNode fetchWeeklyCandles(String symbol) throws Exception {
+        Exception lastError = null;
+        for (String url : BINANCE_KLINES_URLS) {
+            try {
+                String requestUrl = url + "?symbol=" + symbol + "&interval=1w&limit=1000";
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(requestUrl))
+                        .timeout(Duration.ofSeconds(15))
+                        .header("accept", "application/json")
+                        .header("user-agent", "Mozilla/5.0 (compatible; EvilHamsterBot/1.0)")
+                        .GET()
+                        .build();
+                HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IOException("HTTP " + response.statusCode() + " for " + requestUrl);
+                }
+                return JSON.readTree(response.body());
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+        throw lastError == null ? new IOException("No Binance kline endpoints configured.") : lastError;
     }
 
     private MarketSnapshot fetchMarketSnapshot() throws Exception {
@@ -205,7 +315,8 @@ public class FundingTracker {
                     move.price(),
                     fundingPercent,
                     move.priceChangePercent(),
-                    move.volumeMillions()
+                    move.volumeMillions(),
+                    move.valid()
             ));
         }
         return filledMoves;
@@ -358,6 +469,21 @@ public class FundingTracker {
     private record CachedSnapshot(MarketSnapshot marketSnapshot, Instant createdAt) {
         boolean isFresh() {
             return createdAt.plus(SNAPSHOT_CACHE_TTL).isAfter(Instant.now());
+        }
+    }
+
+    private record WeeklyValidation(int completedWeeks, double atlGrowthPercent) {
+        boolean valid(ValidationConfig config) {
+            return completedWeeks >= config.minCompletedWeeks()
+                    && !Double.isNaN(atlGrowthPercent)
+                    && atlGrowthPercent >= config.minAtlGrowthPercent()
+                    && atlGrowthPercent <= config.maxAtlGrowthPercent();
+        }
+    }
+
+    private record CachedWeeklyValidation(WeeklyValidation validation, Instant createdAt) {
+        boolean isFresh() {
+            return createdAt.plus(WEEKLY_VALIDATION_CACHE_TTL).isAfter(Instant.now());
         }
     }
 
